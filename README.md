@@ -41,14 +41,31 @@ The editor is Python (PySide6, VTK) and has only been run on Windows so far. The
 
 1. Install [uv](https://docs.astral.sh/uv/), then in the `editor` folder run `uv sync`.
 2. Download the renderer zip from the releases and unpack it into `editor/renderer/`.
-3. Start the editor with an example model:
+3. Start the editor with an example model (the alchemist; `corpse.vx2` and `skeleton.vx2` are there too):
 
    ```
    cd editor
-   .venv\Scripts\python.exe qt_editor.py ..\assets\corpse.vx2
+   uv run qt_editor.py ../assets/alchemist.vx2
    ```
 
 Read the [guide](editor/docs/guide.md) to learn the editor, and the [reference](editor/docs/reference.md) for material fields, the `.vx2` file format, the Python API and the folder layout.
+
+## Let an AI assistant build with it
+
+The editor's MCP server gives an assistant such as Claude the same model the editor uses: it can open and create models, paint and erase boxes, set materials, undo, look at a quick preview or a path-traced render, and save. Add it to your assistant's MCP configuration (for Claude Desktop, `claude_desktop_config.json`), with your own path to the `editor` folder (after `uv sync`):
+
+```json
+{
+  "mcpServers": {
+    "dualvoxel": {
+      "command": "C:\\path\\to\\DualVoxel\\editor\\.venv\\Scripts\\python.exe",
+      "args": ["-u", "C:\\path\\to\\DualVoxel\\editor\\mcp_server.py"]
+    }
+  }
+}
+```
+
+The same functions are available from Python (`headless_api.VoxelEditor`) and the command line (`editor_cli.py`); the [reference](editor/docs/reference.md#python-api-command-line-and-mcp-server) lists them.
 
 ## Licence
 
