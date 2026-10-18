@@ -1,0 +1,17 @@
+[project]
+name = "dualvoxel"
+version = "0.1.0"
+description = "DualVoxel: a voxel editor with two bytes per voxel, a colour and a material"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp==1.28.1",
+    "pillow>=11",
+    "numpy>=2.3.5",
+    "scikit-image==0.25.2",
+    "scipy>=1.16.3",
+    "pyside6==6.11.1",
+    "pyside6-qtads==5.0.0.2",
+    "vtk==9.5.2",
+    "pyvista>=0.47.0",
+    "pyvistaqt>=0.12.0",
+]

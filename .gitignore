@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+
+# This machine's own settings and the renderer's binary files
+editor/editor.local.json
+editor/renderer/
+
+# Pictures from the API and the command line; models saved as .vox
+editor/outputs/
+export/
+
+# Marks a folder made by the export script
+.public-export

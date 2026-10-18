@@ -1,0 +1,6 @@
+{
+  "renderer_path": "renderer",
+  "send_tables": [
+    {"name": "MyGame", "path": "C:/path/to/MyGame"}
+  ]
+}

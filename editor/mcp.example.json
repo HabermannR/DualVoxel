@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dualvoxel": {
+      "command": "C:\\path\\to\\editor\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-u",
+        "C:\\path\\to\\editor\\mcp_server.py"
+      ],
+      "cwd": "C:\\path\\to\\editor"
+    }
+  }
+}

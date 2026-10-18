@@ -1,0 +1,235 @@
+"""The Light dock: the render's sun and sky, from presets or set freely, and its tilt-shift blur.
+
+The window calls `install_light_panel(window)` once, after the Brush dock; the
+Light dock is a tab beside it. A preset is a starting point: Golden hour and
+Day are the renderer's built-in light, Noon, Overcast and Night are custom lights. Moving any control makes
+the light custom (renderer_set_light): the sun's direction (azimuth around, 0°
+along +x, 90° along +y; elevation above the table) and colour, the sky's horizon
+and zenith colours and the backdrop's top and bottom (what the camera sees past
+the table). Sun and Sky then scale the sun's and the sky's strength (1 each as
+set, 0 none). Tilt blur switches the tilt-shift band; Pause (or F9) stops
+the render and frees the GPU. Only the picture changes, never the model.
+"""
+from __future__ import annotations
+
+import math
+
+import PySide6QtAds as QtAds
+from PySide6 import QtCore, QtGui, QtWidgets
+
+STEP, TOP = 0.05, 3.0
+# name: (built in: golden flag or None for a custom light, sun direction, sun radiance, horizon, zenith,
+#        backdrop top, backdrop bottom); the first two are the shader's own values (trace.comp)
+PRESETS = {
+    "Golden hour": (True, (-0.86, 0.42, 0.30), (13, 7.2, 2.6), (0.95, 0.62, 0.42), (0.26, 0.32, 0.55),
+                    (0.20, 0.22, 0.36), (1.10, 0.66, 0.36)),
+    "Day": (False, (-0.62, -0.42, 0.62), (8.4, 6.15, 3.45), (0.75, 1, 1.45), (0.3, 0.5, 0.9),
+            (0.045, 0.065, 0.14), (0.09, 0.14, 0.19)),
+    "Noon": (None, (-0.30, 0.17, 0.94), (10, 9.6, 8.8), (0.70, 0.85, 1.10), (0.25, 0.45, 0.95),
+             (0.25, 0.42, 0.75), (0.55, 0.68, 0.85)),
+    "Overcast": (None, (-0.40, -0.30, 0.87), (1.6, 1.6, 1.7), (1.30, 1.30, 1.35), (1.0, 1.02, 1.08),
+                 (0.55, 0.57, 0.60), (0.75, 0.76, 0.78)),
+    "Night": (None, (0.60, -0.45, 0.66), (0.35, 0.42, 0.60), (0.06, 0.08, 0.14), (0.02, 0.03, 0.07),
+              (0.01, 0.015, 0.04), (0.04, 0.05, 0.09)),
+}
+CUSTOM = "Custom"
+COLOURS = (("sun", "Sun colour"), ("horizon", "Sky horizon"), ("zenith", "Sky zenith"),
+           ("top", "Background top"), ("bottom", "Background bottom"))
+
+
+def install_light_panel(window) -> "LightPanel":
+    panel = LightPanel(window.render_view)
+    window._dock("Light", panel, QtAds.DockWidgetArea.CenterDockWidgetArea, window.docks["Brush"].dockAreaWidget(),
+                 scroll=True)
+    window.docks["Brush"].setAsCurrentTab()
+    return panel
+
+
+def angles(direction) -> tuple[float, float]:
+    """(azimuth, elevation) in degrees of a direction towards the sun."""
+    x, y, z = direction
+    length = math.sqrt(x * x + y * y + z * z)
+    return math.degrees(math.atan2(y, x)) % 360, math.degrees(math.asin(max(-1.0, min(1.0, z / length))))
+
+
+def direction(azimuth: float, elevation: float) -> tuple[float, float, float]:
+    a, e = math.radians(azimuth), math.radians(elevation)
+    return math.cos(e) * math.cos(a), math.cos(e) * math.sin(a), math.sin(e)
+
+
+class ColourButton(QtWidgets.QPushButton):
+    """A light colour: a hue (shown, picked with the colour dialog) times a strength (kept from the preset),
+    since light colours go above 1."""
+    changed = QtCore.Signal()
+
+    def __init__(self, title: str):
+        super().__init__()
+        self.title = title
+        self.value = (1.0, 1.0, 1.0)
+        self.setFixedWidth(90)
+        self.clicked.connect(self.pick)
+
+    def set_value(self, value) -> None:
+        self.value = tuple(float(v) for v in value)
+        hue, strength = self._split()
+        self.setStyleSheet(f"background: {hue.name()}; border: 1px solid #555")
+        self.setToolTip(f"{self.title}: {', '.join(f'{v:.2f}' for v in self.value)} (linear); click to change")
+
+    def _split(self):
+        strength = max(1.0, *self.value)
+        shown = [min(255, round(255 * (v / strength) ** (1 / 2.2))) for v in self.value]  # as sRGB
+        return QtGui.QColor(*shown), strength
+
+    def pick(self) -> None:
+        hue, strength = self._split()
+        chosen = QtWidgets.QColorDialog.getColor(hue, self, self.title)
+        if chosen.isValid():
+            linear = [(c / 255) ** 2.2 * strength for c in (chosen.red(), chosen.green(), chosen.blue())]
+            self.set_value(linear)
+            self.changed.emit()
+
+
+class LightPanel(QtWidgets.QWidget):
+    def __init__(self, render_view):
+        super().__init__()
+        self.render_view = render_view
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(QtWidgets.QLabel("Preset"))
+        self.preset_box = QtWidgets.QComboBox()
+        self.preset_box.addItems([*PRESETS, CUSTOM])
+        self.preset_box.setToolTip("Golden hour and Day: the renderer's built-in light. The others are starting points.")
+        self.preset_box.activated.connect(lambda i: self.choose(self.preset_box.itemText(i)))
+        top.addWidget(self.preset_box, 1)
+        layout.addLayout(top)
+
+        grid = QtWidgets.QGridLayout()
+        grid.setColumnStretch(1, 1)
+        self.sliders, self.boxes = {}, {}
+        rows = (("Sun", 0, TOP, STEP, "The sun's strength: 1 as set, 0 none"),
+                ("Sky", 0, TOP, STEP, "The sky's light: 1 as set, 0 none"),
+                ("Azimuth", 0, 360, 1, "Where the sun stands around the table: 0° along +x, 90° along +y"),
+                ("Elevation", 1, 89, 1, "How high the sun stands above the table"))
+        for row, (name, low, high, step, tip) in enumerate(rows):
+            label = QtWidgets.QLabel(name)
+            slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+            slider.setRange(round(low / step), round(high / step))
+            box = QtWidgets.QDoubleSpinBox()
+            box.setRange(low, high)
+            box.setSingleStep(step)
+            box.setDecimals(2 if step < 1 else 0)
+            box.setKeyboardTracking(False)
+            for widget in (label, slider, box):
+                widget.setToolTip(tip)
+            slider.valueChanged.connect(lambda v, n=name, s=step: self._moved(n, v * s))
+            box.valueChanged.connect(lambda v, n=name: self._moved(n, v))
+            grid.addWidget(label, row, 0)
+            grid.addWidget(slider, row, 1)
+            grid.addWidget(box, row, 2)
+            self.sliders[name], self.boxes[name] = (slider, step), box
+        layout.addLayout(grid)
+
+        colours = QtWidgets.QGridLayout()
+        self.colour_buttons = {}
+        for i, (key, title) in enumerate(COLOURS):
+            button = ColourButton(title)
+            button.changed.connect(self._custom)
+            colours.addWidget(QtWidgets.QLabel(title), i, 0)
+            colours.addWidget(button, i, 1)
+            self.colour_buttons[key] = button
+        colours.setColumnStretch(2, 1)
+        layout.addLayout(colours)
+
+        buttons = QtWidgets.QHBoxLayout()
+        reset = QtWidgets.QPushButton("Default light")
+        reset.setToolTip("The built-in golden hour at its own strength")
+        reset.clicked.connect(lambda: (self.set_strength(1.0, 1.0), self.choose("Golden hour")))
+        night = QtWidgets.QPushButton("Lights off")
+        night.setToolTip("Sun and sky off, to see what glows on its own")
+        night.clicked.connect(lambda: self.set_strength(0.0, 0.0))
+        buttons.addWidget(reset)
+        buttons.addWidget(night)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        render_row = QtWidgets.QHBoxLayout()
+        self.blur_box = QtWidgets.QCheckBox("Tilt blur")
+        self.blur_box.setToolTip("The tilt-shift blur above and below the model's band; off shows it sharp")
+        self.blur_box.setChecked(render_view.tilt_blur)
+        self.blur_box.toggled.connect(render_view.set_tilt_blur)
+        self.pause_button = QtWidgets.QPushButton("Pause render", checkable=True)
+        self.pause_button.setToolTip("Stop drawing and free the GPU; the last picture stays (F9)")
+        self.pause_button.toggled.connect(render_view.set_paused)
+        render_view.paused_changed.connect(self._show_paused)
+        render_row.addWidget(self.blur_box)
+        render_row.addStretch(1)
+        render_row.addWidget(self.pause_button)
+        layout.addLayout(render_row)
+        hint = QtWidgets.QLabel("Live in the Render dock; the model's files are not touched.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888")
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        self.choose("Golden hour" if render_view.golden else "Day")
+        self._show_strength(render_view.sun, render_view.sky)
+
+    # --- presets and the custom light ------------------------------------------------------
+    def choose(self, name: str) -> None:
+        """Load a preset into the controls and the render (Custom keeps what is set)."""
+        if name not in PRESETS:
+            return
+        golden, sun_dir, sun, horizon, zenith, top, bottom = PRESETS[name]
+        azimuth, elevation = angles(sun_dir)
+        self._show_number("Azimuth", azimuth)
+        self._show_number("Elevation", elevation)
+        for key, value in zip(("sun", "horizon", "zenith", "top", "bottom"), (sun, horizon, zenith, top, bottom)):
+            self.colour_buttons[key].set_value(value)
+        self._direction = sun_dir  # the preset's own vector, so the built-in values stay exact
+        self.preset_box.setCurrentText(name)
+        if golden is not None:
+            self.render_view.set_light(None, golden=golden)  # the built-in light, exactly
+        else:
+            self.render_view.set_light(self.values(), golden=False)
+
+    def values(self) -> list[float]:
+        b = self.colour_buttons
+        return [*self._direction, *b["sun"].value, *b["horizon"].value, *b["zenith"].value, *b["top"].value,
+                *b["bottom"].value]
+
+    def _custom(self) -> None:
+        self.preset_box.setCurrentText(CUSTOM)
+        self.render_view.set_light(self.values())
+
+    # --- the sliders ------------------------------------------------------------------------
+    def set_strength(self, sun: float, sky: float) -> None:
+        self.render_view.set_daylight(sun, sky)
+        self._show_strength(sun, sky)
+
+    def _moved(self, name: str, value: float) -> None:
+        if name in ("Sun", "Sky"):
+            sun, sky = self.render_view.sun, self.render_view.sky
+            sun, sky = (round(value, 2), sky) if name == "Sun" else (sun, round(value, 2))
+            self.set_strength(sun, sky)
+            return
+        self._show_number(name, value)
+        self._direction = direction(self.boxes["Azimuth"].value(), self.boxes["Elevation"].value())
+        self._custom()
+
+    def _show_strength(self, sun: float, sky: float) -> None:
+        self._show_number("Sun", sun)
+        self._show_number("Sky", sky)
+
+    def _show_number(self, name: str, value: float) -> None:
+        slider, step = self.sliders[name]
+        for widget, shown in ((slider, round(value / step)), (self.boxes[name], value)):
+            widget.blockSignals(True)
+            widget.setValue(shown)
+            widget.blockSignals(False)
+
+    def _show_paused(self, paused: bool) -> None:
+        self.pause_button.blockSignals(True)
+        self.pause_button.setChecked(paused)
+        self.pause_button.blockSignals(False)
+        self.pause_button.setText("Resume render" if paused else "Pause render")

@@ -1,0 +1,26 @@
+{
+  "format": "voxelpipeline-project",
+  "version": 1,
+  "models": {
+    "alchemist": "alchemist.vx2",
+    "skeleton": "skeleton.vx2",
+    "corpse": "corpse.vx2"
+  },
+  "scenes": [
+    {"name": "Scene-1", "instances": [
+      {"name": "alchemist-1", "model": "alchemist", "position": [0, 0, 0], "orient": "+x+y+z"},
+      {"name": "skeleton-1", "model": "skeleton", "position": [36, 0, 0], "orient": "+y-x+z"},
+      {"name": "corpse-1", "model": "corpse", "position": [0, -40, 0], "orient": "+x+y+z"},
+      {"name": "skeleton-2", "model": "skeleton", "position": [72, 0, 0], "orient": "+y+x+z"}
+    ]},
+    {"name": "Ring", "instances": [
+      {"name": "skeleton-1", "model": "skeleton", "position": [0, 0, 0], "orient": "+x+y+z"},
+      {"name": "skeleton-2", "model": "skeleton", "position": [42, 24, 0], "orient": "+y-x+z"},
+      {"name": "skeleton-3", "model": "skeleton", "position": [42, 72, 0], "orient": "+y-x+z"},
+      {"name": "skeleton-4", "model": "skeleton", "position": [0, 96, 0], "orient": "-x-y+z"},
+      {"name": "skeleton-5", "model": "skeleton", "position": [-42, 72, 0], "orient": "-y+x+z"},
+      {"name": "skeleton-6", "model": "skeleton", "position": [-42, 24, 0], "orient": "-y+x+z"},
+      {"name": "alchemist-1", "model": "alchemist", "position": [0, 32, 0], "orient": "+x+y+z"}
+    ]}
+  ]
+}
