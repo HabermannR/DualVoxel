@@ -166,7 +166,10 @@ class RenderView(QtWidgets.QWidget):
                              + (" · no DLSS" if self.engine is not None and self.engine.renderer.reconstruction == 0 else ""))
         if self.message:
             painter.setPen(QtGui.QColor(220, 220, 220))
-            painter.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, self.message)
+            # Wrapped anywhere: the message can hold a long folder path without spaces.
+            painter.drawText(self.rect().adjusted(16, 16, -16, -16),
+                             int(QtCore.Qt.AlignmentFlag.AlignCenter) | int(QtCore.Qt.TextFlag.TextWrapAnywhere),
+                             self.message)
 
     def resizeEvent(self, event):
         self._resize_timer.start()
