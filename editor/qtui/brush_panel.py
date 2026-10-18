@@ -26,14 +26,16 @@ KIND_TIPS = {
     "voxel": "A square, circle, cube or sphere of the size below",
     "face": "The clicked face's whole connected flat area: attach builds a layer on it, paint and erase take it",
     "box": "Drag a rectangle in the clicked layer (a click: one voxel)",
-    "stamp": "A project's model: select it in the Outliner, then Use as brush",
+    "stamp": "A project's model: select it in the Project dock, then Use as brush",
     "smooth": "Rounds off what is in the brush: fills hollows, takes off bumps",
     "erode": "Takes the outer skin of voxels off what is in the brush (Shift: grow)",
     "grow": "Adds a skin of voxels to what is in the brush, in the colours beside it (Shift: erode)",
 }
 MODE_TIPS = {"attach": "Add voxels against the clicked face; never overwrites",
              "paint": "Recolour voxels that are there", "erase": "Remove voxels",
-             "pick": "Take a voxel's colour and material"}
+             "pick": "Take a voxel's colour and material",
+             "protect": "Mark voxels the assistant may not change over the live link (tinted violet; Shift lifts "
+                        "it). Not an edit: no undo step, not saved"}
 
 
 def install_brush_panel(window) -> "BrushPanel":
@@ -191,6 +193,8 @@ class BrushPanel(QtWidgets.QWidget):
         tool = self.doc.tool
         if tool == "pick":
             self.mouse_label.setText("Left: pick")
+        elif tool == "protect":
+            self.mouse_label.setText("Left: protect · Shift: unprotect · Alt: pick")
         else:
             self.mouse_label.setText(f"Left: {tool} · Shift: {mode_for(tool, shift=True)} · "
                                      f"Ctrl: {mode_for(tool, ctrl=True)} · Alt: pick")
@@ -208,7 +212,7 @@ class BrushPanel(QtWidgets.QWidget):
             button.setChecked(on)
             button.blockSignals(False)
         if b.stamp is None:
-            self.stamp_note.setText("No stamp yet: select a model or an instance in the Outliner, then "
+            self.stamp_note.setText("No stamp yet: select a model or an instance in the Project dock, then "
                                     "Use as brush.")
         else:
             name, model, orient = b.stamp

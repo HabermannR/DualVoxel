@@ -306,7 +306,10 @@ class Project:
         if save_models:
             for name_ in self.modified_models():
                 model = self.models[name_]
-                model.save(Path(model.path).stem if model.path else name_)
+                if model.path is not None and Path(model.path).suffix == ".vx2":
+                    model.save_path(model.path)  # where it was opened or saved, wherever that is
+                else:
+                    model.save(Path(model.path).stem if model.path else name_)
                 self.mark_saved(name_)
         missing = [n for n, m in self.models.items() if m.path is None]
         if missing:

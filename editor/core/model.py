@@ -93,11 +93,18 @@ class Model:
         """Save as assets/<name>.vx2 (and a lossless export/<name>.vox)."""
         if not name or any(ch in name for ch in "/\\:") or name.startswith("."):
             raise ValueError("give a plain file name, saved into assets/")
-        target = SAVE_ROOT / f"{Path(name).stem}.vx2"
+        return self.save_path(SAVE_ROOT / f"{Path(name).stem}.vx2", export_vox)
+
+    def save_path(self, path: str | Path, export_vox: bool = True) -> Path:
+        """Save as a .vx2 anywhere, with a lossless .vox: export/<name>.vox for a model in assets/,
+        else beside the .vx2."""
+        target = Path(path).with_suffix(".vx2")
         local = [self.local[i] for i in sorted(self.local)]
         vx2.write(target, self.colour, self.material, local)
         if export_vox:
-            vx2.to_vox(self.colour, self.material, ROOT / "export" / f"{target.stem}.vox", local=local)
+            in_assets = target.resolve().parent == SAVE_ROOT.resolve()
+            vox = ROOT / "export" / f"{target.stem}.vox" if in_assets else target.with_suffix(".vox")
+            vx2.to_vox(self.colour, self.material, vox, local=local)
         self.saved_local = copy.deepcopy(self.local)
         self.path = target
         return target

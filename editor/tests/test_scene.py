@@ -163,6 +163,7 @@ class QtSceneTests(unittest.TestCase):
         window._engine_started = True  # no GPU renderer for this check
         window.settings = QtCore.QSettings(str(Path(tempfile.mkdtemp()) / "layout.ini"),
                                            QtCore.QSettings.Format.IniFormat)  # leave the user's layout alone
+        window.confirm_close = lambda: True  # close without asking to save
         window.show()
         QTest.qWait(200)
         scenes = window.scenes
@@ -219,9 +220,10 @@ class QtSceneTests(unittest.TestCase):
 
         # the transform panel: position, rotations, mirror, a grid, then undo it with Ctrl+Z in the view
         pdoc.select(copy)
-        panel.position[2].setValue(3)
-        panel.position[2].editingFinished.emit()
+        panel.position[2].setValue(3)  # as a click on its arrows: moves at once, the yellow box with it
         self.assertEqual(copy.position[2], 3)
+        lo, _ = pdoc.project.box(copy)
+        self.assertAlmostEqual(view.plotter.actors["selected"].GetBounds()[4], lo[2] - 0.1, places=3)
         rotate_x_plus = panel.buttons[1]
         rotate_x_plus.click()
         self.assertEqual(copy.position[2], 3)  # the bottom stays
@@ -287,7 +289,7 @@ class QtSceneTests(unittest.TestCase):
         self.assertEqual(len(pdoc.project.models), 3)
         window.close()
 
-    def _window(self):
+    def _window(self, ask_to_save: bool = False):
         from PySide6 import QtCore
         from PySide6.QtTest import QTest
         from qtui.window import EditorWindow
@@ -295,6 +297,8 @@ class QtSceneTests(unittest.TestCase):
         window._engine_started = True
         window.settings = QtCore.QSettings(str(Path(tempfile.mkdtemp()) / "layout.ini"),
                                            QtCore.QSettings.Format.IniFormat)
+        if not ask_to_save:
+            window.confirm_close = lambda: True  # close without asking to save
         window.show()
         QTest.qWait(200)
         return window
@@ -305,6 +309,134 @@ class QtSceneTests(unittest.TestCase):
         renderer.SetWorldPoint(*point, 1)
         renderer.WorldToDisplay()
         return tuple(int(round(v)) for v in renderer.GetDisplayPoint()[:2])
+
+    def test_the_render_follows_the_scene_or_the_model(self):
+        from PySide6 import QtCore
+        from PySide6.QtTest import QTest
+        from core.model import ROOT as PIPELINE
+        from qtui.window import EditorWindow
+        window = EditorWindow()
+        window._engine_started = True  # no GPU renderer for this check
+        window.settings = QtCore.QSettings(str(Path(tempfile.mkdtemp()) / "layout.ini"),
+                                           QtCore.QSettings.Format.IniFormat)
+        window.confirm_close = lambda: True  # close without asking to save
+        window.show()
+        QTest.qWait(200)
+        render, scenes = window.render_view, window.scenes
+        self.assertFalse(window.docks["Project"].isClosed())  # open in the standard layout
+        self.assertIs(render.drawn_model(), window.doc.model)
+        window.open_path(PIPELINE / "assets" / "meadow.project.json")
+        self.assertTrue(window.docks["Project"].isCurrentTab())  # its parts and instances
+        shown = render.drawn_model()
+        self.assertIsNot(shown, window.doc.model)
+        project = scenes.project_doc.project
+        lo, hi = project.bounds(scenes.project_doc.scene)
+        self.assertEqual(shown.colour.shape, tuple(int(v) for v in (hi - lo)[::-1]))
+        # arrow keys in the Project dock: the selection (and its yellow box) follows at every step
+        tree, pdoc = scenes.outliner.tree, scenes.project_doc
+        instances = pdoc.scene.instances
+        scenes.outliner.tree.setFocus()
+        pdoc.select(instances[0])
+        for expected in instances[1:4]:
+            QTest.keyClick(tree, QtCore.Qt.Key.Key_Down)
+            self.assertIs(pdoc.instance, expected)
+            lo, _ = pdoc.project.box(expected)
+            self.assertAlmostEqual(scenes.scene_view.plotter.actors["selected"].GetBounds()[0], lo[0] - 0.1, places=3)
+        # selected while the Scene tab is hidden behind another tab: drawn as soon as it shows again
+        view, scene_dock = scenes.scene_view, window.docks["Scene"]
+        next(d for d in scene_dock.dockAreaWidget().dockWidgets() if d is not scene_dock).setAsCurrentTab()
+        QTest.qWait(50)
+        self.assertFalse(view.isVisible())
+        pdoc.select(instances[5])
+        drawn, draw = [], view.plotter.render
+        view.plotter.render = lambda: (drawn.append(1), draw())
+        scene_dock.setAsCurrentTab()
+        QTest.qWait(50)
+        view.plotter.render = draw
+        self.assertTrue(drawn)
+        version = shown.version
+        scenes.edit_model("bush")  # a part in the model docks: the render shows it
+        self.assertIs(render.drawn_model(), project.models["bush"])
+        window.doc.set_voxels([(0, 0, 0)], colour=60)
+        scenes._render_scene(True)
+        self.assertGreater(render.drawn_model().version, version)  # the edit shows in the scene
+        window.close()
+
+    def test_closing_asks_before_unsaved_work_is_lost(self):
+        from unittest import mock
+        from PySide6 import QtWidgets
+        from core.model import Model
+        Button = QtWidgets.QMessageBox.StandardButton
+        asked = []
+
+        def answering(button):  # the dialog, answered without showing it
+            def warning(parent, title, text, *args):
+                asked.append(text)
+                return button
+            return mock.patch.object(QtWidgets.QMessageBox, "warning", side_effect=warning)
+
+        def recolour(doc, point):  # an edit: another colour at this voxel
+            doc.set_voxels([point], colour=61 if doc.voxel(*point) == 60 else 60)
+            return doc.voxel(*point)
+
+        # nothing edited: the window closes without asking
+        window = self._window(ask_to_save=True)
+        self.assertEqual(window.unsaved(), [])
+        with answering(Button.Cancel):
+            self.assertTrue(window.close())
+        self.assertEqual(asked, [])
+
+        # an edited model: Cancel keeps the window open, Save saves it (as Ctrl+S) and closes
+        window = self._window(ask_to_save=True)
+        window.open_path(COPIES["alchemist"])
+        colour = recolour(window.doc, (0, 0, 0))
+        with answering(Button.Cancel):
+            self.assertFalse(window.close())
+        self.assertTrue(window.isVisible())
+        self.assertIn(f"Model {COPIES['alchemist'].name}", asked[-1])
+        self.assertNotIn("Project", asked[-1])
+        with answering(Button.Save):
+            self.assertTrue(window.close())
+        saved = Model()
+        saved.open(COPIES["alchemist"])
+        self.assertEqual(int(saved.colour[0, 0, 0]), colour)
+
+        # a new project with an edited part: one line for the project (the part is not a model of its own);
+        # Save runs Save project, which asks for a name and saves the part too
+        window = self._window(ask_to_save=True)
+        scenes = window.scenes
+        pdoc = scenes.project_doc
+        name = pdoc.add_model(COPIES["skeleton"])
+        pdoc.add_instance(name)
+        scenes.edit_model(name)
+        colour = recolour(window.doc, (0, 0, 0))
+        with answering(Button.Cancel):
+            self.assertFalse(window.close())
+        self.assertEqual(window.unsaved(), [f"Project (new, never saved): edited parts: {name}; scenes or parts changed"])
+        self.assertIn(window.unsaved()[0], asked[-1])
+        with answering(Button.Save), mock.patch.object(QtWidgets.QInputDialog, "getText", return_value=(PROJECT, True)):
+            self.assertTrue(window.close())
+        project = SAVE_ROOT / f"{PROJECT}{SUFFIX}"
+        self.assertTrue(project.exists())
+        saved = Model()
+        saved.open(COPIES["skeleton"])
+        self.assertEqual(int(saved.colour[0, 0, 0]), colour)
+
+        # the project reopened is saved; a moved instance is not, and Discard closes without saving it
+        window = self._window(ask_to_save=True)
+        window.open_path(project)
+        pdoc = window.scenes.project_doc
+        self.assertEqual(window.unsaved(), [])
+        pdoc.select(pdoc.scene.instances[0])
+        pdoc.move(1, 0, 0)
+        self.assertEqual(window.unsaved(), [f"Project {project.name}: scenes or parts changed"])
+        pdoc.move(-1, 0, 0)  # moved back: as saved
+        self.assertEqual(window.unsaved(), [])
+        pdoc.move(1, 0, 0)
+        text = project.read_text(encoding="utf-8")
+        with answering(Button.Discard):
+            self.assertTrue(window.close())
+        self.assertEqual(project.read_text(encoding="utf-8"), text)
 
     def test_a_model_as_stamp_brush(self):
         from PySide6 import QtCore

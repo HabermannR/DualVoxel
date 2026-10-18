@@ -12,8 +12,12 @@ says what a click writes, for the 3D view and the slices alike.
 
 The mouse, as in MagicaVoxel: the mode decides what a left click or drag does;
 Shift + left and Ctrl + left reach the other two (`mode_for`), Alt + left picks.
+The Protect mode marks the solid voxels a brush covers as the assistant's no-go
+area over the live link (Shift lifts it); it does not change the model.
 """
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import numpy as np
 from PySide6 import QtCore
@@ -24,8 +28,10 @@ from core.scene import place_plane, rotated
 SCULPT = SCULPT_OPS  # smooth, erode, grow
 KINDS = ("voxel", "face", "box", "stamp", *SCULPT)
 SWAPPED_SCULPT = {"erode": "grow", "grow": "erode"}  # with Shift, as attach and erase
-SHIFT_MODE = {"attach": "erase", "erase": "attach", "paint": "erase"}  # MagicaVoxel's attach / erase tandem
-CTRL_MODE = {"attach": "paint", "erase": "paint", "paint": "attach"}
+SHIFT_MODE = {"attach": "erase", "erase": "attach", "paint": "erase",  # MagicaVoxel's attach / erase tandem
+              "protect": "unprotect"}
+CTRL_MODE = {"attach": "paint", "erase": "paint", "paint": "attach", "protect": "protect"}
+PROTECT_KINDS = ("voxel", "face", "box")  # the Protect mode marks what these cover; the other kinds act as voxel
 
 
 def mode_for(tool: str, shift: bool = False, ctrl: bool = False, alt: bool = False) -> str:
@@ -93,6 +99,11 @@ class Brush(QtCore.QObject):
             self.changed.emit()
 
 
+def _as_voxel(brush: Brush):
+    """The voxel kind with this brush's size, shape and mirror (the Protect mode's stand-in for the others)."""
+    return SimpleNamespace(kind="voxel", size=brush.size, shape=brush.shape, mirror=brush.mirror, stamp=None)
+
+
 def stamp_low(target, normal, size):
     """A box's low corner against a face: from the target along the normal, centred across it."""
     size = np.asarray(size)
@@ -109,9 +120,14 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
     voxel the mode acts on (attach: the empty one before the face, else the solid one); normal: the clicked
     face's outward normal (a slice: its viewing axis); hit: the solid voxel clicked (None on the floor or an
     empty cell); box_start: (voxel, normal) where a box drag began; in_slice: a slice, where the face brush
-    fills the connected area of the clicked cell's colour in its layer and a stamp is a 3D-view brush."""
+    fills the connected area of the clicked cell's colour in its layer and a stamp is a 3D-view brush.
+    protect / unprotect: the solid voxels the brush covers, as paint would (the colours are not used)."""
     if tool == "pick" or target is None and hit is None:
         return None
+    if tool in ("protect", "unprotect"):
+        if brush.kind not in PROTECT_KINDS:
+            brush = _as_voxel(brush)
+        tool = "paint"
     normal = np.asarray(normal)
     if brush.kind in SCULPT:
         op = SWAPPED_SCULPT.get(brush.kind, brush.kind) if shift else brush.kind

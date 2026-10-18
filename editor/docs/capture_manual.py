@@ -1,8 +1,8 @@
 """Screenshots for the guide (guide.md), from the live editor and its renderer.
 
-    ..\\.venv\\Scripts\\python.exe capture_manual.py
+    ..\\.venv\\Scripts\\python.exe capture_manual.py [--scenes]
 
-Shows the window on the desktop (it stays on top while it captures), waits for
+--scenes retakes only the project's figures (scene, scene_render, transform). Shows the window on the desktop (it stays on top while it captures), waits for
 the render to settle and writes `figures/current_*.png`. Each dock is cut from
 one grab of the window, so the VTK views come out as they are on screen. Every
 PNG records 96 dpi per logical pixel. Nothing is saved to the model or the project.
@@ -150,6 +150,35 @@ def main() -> None:
         window.render_view._moved()
         settle(window)
 
+    def scenes():
+        """A project: the Project dock and the Scene view with an instance selected (its yellow box), the
+        whole scene in the Render dock, and the Transform dock."""
+        whole_layout()
+        window.open_path(ROOT / "assets" / "meadow.project.json")
+        wait(800)
+        scenes = window.scenes
+        project = scenes.project_doc
+        project.select(next(i for i in project.scene.instances if i.name == "bush-1"))
+        wait(300)
+        focus({"Scene", "Project"}, 1300, 760)
+        scenes.scene_view.frame()
+        wait(300)
+        shoot.whole("scene")
+        focus({"Render"}, 1000, 640)
+        scenes._render_scene(True)  # as while the Scene tab is in use
+        wait(300)
+        reframe_render()
+        shoot.widget(window.render_view, "scene_render")
+        focus({"Transform"}, 640, 700)
+        shoot.dock("Transform", "transform")
+        whole_layout()
+
+    if "--scenes" in sys.argv[1:]:  # only the project's figures
+        scenes()
+        window.close()
+        print("done")
+        return
+
     # the whole desktop, with a sphere brush's preview on the floor in the 3D view
     view.frame()
     brush.set(kind="voxel", size=5, round=True, volume=True)
@@ -207,19 +236,7 @@ def main() -> None:
     shoot.dock("Colours", "colours")
     shoot.dock("Materials", "materials")
 
-    # a project: the outliner, the scene view and the transform panel
-    window.open_path(ROOT / "assets" / "demo.project.json")
-    wait(800)
-    project = window.scenes.project_doc
-    project.select(project.scene.instances[1])  # a skeleton, turned a quarter
-    wait(300)
-    focus({"Scene", "Outliner"}, 1300, 760)
-    window.scenes.scene_view.frame()
-    wait(300)
-    shoot.whole("scene")
-    focus({"Transform"}, 640, 700)
-    shoot.dock("Transform", "transform")
-    whole_layout()
+    scenes()
     window.close()
     print("done")
 

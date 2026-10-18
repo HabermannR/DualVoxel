@@ -6,7 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 SWATCH = 18
-TOOL_KEYS = {"attach": "A", "paint": "B", "erase": "E", "pick": "P"}
+TOOL_KEYS = {"attach": "A", "paint": "B", "erase": "E", "pick": "P", "protect": "L"}
 
 
 class ColourGrid(QtWidgets.QWidget):

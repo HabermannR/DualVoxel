@@ -2,7 +2,7 @@
 
     .venv\\Scripts\\python.exe editor_cli.py inspect  C:\\...\\assets\\corpse.vx2
     .venv\\Scripts\\python.exe editor_cli.py preview  C:\\...\\assets\\corpse.vx2 --output corpse.png
-    .venv\\Scripts\\python.exe editor_cli.py render   C:\\...\\assets\\corpse.vx2 --output corpse-render.png
+    .venv\\Scripts\\python.exe editor_cli.py render   C:\\...\\assets\\corpse.vx2 --output corpse-render.png --light Overcast
     .venv\\Scripts\\python.exe editor_cli.py edit     C:\\...\\assets\\corpse.vx2 --operations ops.json --save corpse-skin
 
 Operations are a JSON list of {"operation": name, "arguments": {...}} with the
@@ -13,10 +13,11 @@ import argparse
 import json
 from pathlib import Path
 
+from core.lights import PRESETS
 from headless_api import VoxelEditor
 
 EDITS = {"paint_box", "erase_box", "shape_slice", "set_material_box", "set_material_for_colour", "replace_colour",
-         "protect_box", "clear_protection", "undo", "redo"}
+         "speckle", "noise_terrain", "erode_surface", "scatter", "protect_box", "clear_protection", "undo", "redo"}
 
 
 def main():
@@ -27,6 +28,7 @@ def main():
     parser.add_argument("--operations", type=Path)
     parser.add_argument("--save", help="for edit: save as assets/<name>.vx2 (plus export/<name>.vox)")
     parser.add_argument("--yaw", type=float, default=-25.0)
+    parser.add_argument("--light", default="Golden hour", help="for render: " + ", ".join(PRESETS))
     args = parser.parse_args()
 
     editor = VoxelEditor()
@@ -37,7 +39,7 @@ def main():
         elif args.command == "preview":
             print(editor.save_preview(args.output or "preview.png"))
         elif args.command == "render":
-            print(editor.save_render(args.output or "render.png", yaw=args.yaw))
+            print(editor.save_render(args.output or "render.png", yaw=args.yaw, light=args.light))
         else:
             if not args.operations or not args.save:
                 parser.error("edit needs --operations and --save")

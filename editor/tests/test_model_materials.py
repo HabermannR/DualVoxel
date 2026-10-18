@@ -73,6 +73,20 @@ class ModelMaterialTests(unittest.TestCase):
         self.assertEqual(again.model.material[0, 0, 0], made)
         self.assertEqual(again.model.material_info(made)["name"], "my glass")
 
+    def test_save_anywhere_puts_the_vox_beside_it_and_assets_still_exports(self):
+        doc = Document()
+        doc.new(4, 4, 4)
+        doc.set_voxels([(1, 1, 1)], colour=doc.colour)
+        elsewhere = self.tmp / "my models" / "plant"
+        elsewhere.parent.mkdir()
+        path = doc.model.save_path(elsewhere)
+        self.assertEqual(path, elsewhere.with_suffix(".vx2"))
+        self.assertTrue(path.exists() and path.with_suffix(".vox").exists())
+        self.assertEqual(doc.model.path, path)
+        path = doc.model.save_path(self.tmp / "assets" / "plant.vx2")
+        self.assertTrue((self.tmp / "export" / "plant.vox").exists())
+        self.assertFalse((self.tmp / "assets" / "plant.vox").exists())
+
     def test_a_stamp_brings_its_own_materials_along(self):
         source = Document()
         source.new(4, 4, 4)

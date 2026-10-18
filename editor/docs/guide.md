@@ -20,7 +20,8 @@ Every screenshot here comes from the running editor (`capture_manual.py` retakes
 4. [Colours and materials](#4-colours-and-materials)
 5. [Light and the render](#5-light-and-the-render)
 6. [Scenes and parts](#6-scenes-and-parts)
-7. [Keys](#7-keys)
+7. [Working with an assistant](#7-working-with-an-assistant)
+8. [Keys](#8-keys)
 
 ---
 
@@ -36,7 +37,7 @@ or double-click `run_qt_editor.cmd`. The window opens at once. The first time, t
 
 ![The whole editor](figures/current_desktop.png)
 
-*The editor with the alchemist open. Left: the Outliner and the Front, Side and Top slices. Middle: the 3D edit view, with a sphere brush's green preview on the floor. Next to it: the Render dock. Far right: Brush (Light behind it), Colours (Material editor and Transform behind it) and Materials.*
+*The editor with the alchemist open. Left: the Project dock and the Front, Side and Top slices. Middle: the 3D edit view, with a sphere brush's green preview on the floor. Next to it: the Render dock. Far right: Brush (Light behind it), Colours (Material editor and Transform behind it) and Materials.*
 
 ### Your first model
 
@@ -44,7 +45,7 @@ or double-click `run_qt_editor.cmd`. The window opens at once. The first time, t
 2. Click a colour in the **Colours** dock and a material in the **Materials** dock. **matte** is the plain one.
 3. In the **Brush** dock choose **Attach** and **Voxel**, and a size.
 4. Draw in the 3D edit view with the left mouse button. Right drag turns the view, middle drag moves it, the wheel zooms.
-5. **File → Save** (`Ctrl+S`). The model goes to `assets/<name>.vx2`, with a MagicaVoxel copy in `export/<name>.vox`.
+5. **File → Save** (`Ctrl+S`). Pick a place and a name; the dialog starts in `assets/`. The model is saved as a `.vx2` with a MagicaVoxel copy: in `export/<name>.vox` for a model in `assets/`, else a `.vox` beside the `.vx2`.
 
 > **Tip:** the 3D edit view is for drawing. It shows flat colours so every voxel is easy to hit. Judge how the model *looks* in the Render dock.
 
@@ -66,11 +67,11 @@ Every part of the window is a dock. Drag a dock by its tab to move it beside ano
 | Colours | The 255 colours; a click picks one. |
 | Materials | The materials, grouped; a click picks one. |
 | Material editor | The current material's settings, live in the render. |
-| Outliner, Scene, Transform | Several models placed together ([Scenes and parts](#6-scenes-and-parts)). |
+| Project, Scene, Transform | Several models placed together ([Scenes and parts](#6-scenes-and-parts)). |
 
 The status bar names the model, its size and voxel count, and what the mouse is over, for example `3D attach (voxel): (6, 2, 1) · 66 voxels`: the mode, the brush, the voxel, and how many voxels a click would change.
 
-**Undo** with `Ctrl+Z`, redo with `Ctrl+Y`. Every click or drag is one step, however many voxels it changed. While the Outliner, the Scene view or the Transform dock has the focus, undo works on the scene instead of the model.
+**Undo** with `Ctrl+Z`, redo with `Ctrl+Y`. Every click or drag is one step, however many voxels it changed. While the Project dock, the Scene view or the Transform dock has the focus, undo works on the scene instead of the model.
 
 ---
 
@@ -100,6 +101,7 @@ You never have to remember this: the Brush dock shows the current mapping under 
 - **Paint** (`B`) gives existing voxels the current colour and material.
 - **Erase** (`E`) removes voxels.
 - **Pick** (`P`) takes a voxel's colour and material.
+- **Protect** (`L`) marks voxels an AI assistant may not change while it works in the editor ([section 7](#7-working-with-an-assistant)). Protected voxels are tinted violet; Shift + left lifts the protection. It changes nothing in the model.
 
 ### Brushes
 
@@ -248,17 +250,73 @@ Changing the direction or a colour turns the preset into **Custom**.
 
 ## 6. Scenes and parts
 
-A **project** places several models together, like MagicaVoxel's world view or Blender's objects. It is a file `assets/<name>.project.json` that lists **parts** (models, each a `.vx2` file) and any number of **scenes** made of **instances**. Use **Scene → New project / Open project… / Save project** (`Ctrl+Alt+S`). Save project also saves edited parts.
-
-An instance is a *linked* copy: it points at its part and never copies the voxels, so painting the part changes every instance of it. Each instance has a position and a quarter-turn orientation, mirrored or not.
-
-Opening a MagicaVoxel file with several models makes a new project: each model becomes a part and MagicaVoxel's scene becomes a scene of instances. Save project writes the parts to `assets` as `<file>-<n>.vx2`.
+A **project** places several models together, like MagicaVoxel's world view or Blender's objects. Its models are its **parts**; a **scene** places parts as **instances**. Use **Scene → New project / Open project… / Save project** (`Ctrl+Alt+S`), or give a `.project.json` on the command line.
 
 ![A project open in the Scene view](figures/current_scene.png)
 
-*`demo.project.json`: the Outliner lists its three parts and two scenes; the Scene view shows `Scene-1` with a skeleton selected.*
+*`meadow.project.json`: the Project dock lists its 10 parts and the Meadow scene's 20 instances; in the Scene view the selected instance, `bush-1`, sits in a yellow box.*
 
-### The Outliner
+### What the project file holds
+
+A project is a small text file, `assets/<name>.project.json`. It holds no voxels: the voxels stay in the parts' own `.vx2` files. The file lists which `.vx2` each part comes from, and for each instance its part, where it stands and how it is turned:
+
+```json
+"models": {"fern": "fern.vx2", "ground": "meadow_parts/ground.vx2"},
+"scenes": [{"name": "Meadow", "instances": [
+  {"name": "fern-2", "model": "fern", "position": [1, 13, 6], "orient": "-x+y+z"},
+  {"name": "ground-1", "model": "ground", "position": [0, 0, 0], "orient": "+x+y+z"}
+]}]
+```
+
+`position` is the low corner of the instance's box, in voxels. `orient` says where the part's own x, y and z axes point in the scene: `-x+y+z` is the part mirrored along x, `+y-x+z` a quarter turn about z.
+
+That is why a project is more than one big model:
+
+- **An instance is a linked copy.** It points at its part and never copies the voxels. The meadow has one fern part and three ferns: recolour the part and all three change.
+- **Moving is cheap.** Moving or turning an instance changes three numbers in the file, never a voxel.
+- **Parts are ordinary models.** A part is a plain `.vx2`: open it on its own, or use it in another project.
+- **It is readable.** Open the file in any text editor to see the whole layout, or compare two versions of it.
+
+### Saving a project
+
+A project has two kinds of change, saved in two places:
+
+| You change | It lives in |
+|---|---|
+| Instances: add, move, turn, mirror, copy, delete | the `.project.json` |
+| A part's voxels, colours or materials | that part's `.vx2` |
+
+**Save project** writes both: the project file, and every part you edited (the Project dock marks those with `*`). `Ctrl+S` while editing a part saves only that part.
+
+Closing the editor with unsaved work asks first. One dialog lists what is unsaved: the model you are editing (when it is not a part of the project), and the project with the parts you edited. **Save** runs Save project for the project (asking for a name if it has none yet) and `Ctrl+S` for the model, then closes. **Discard** closes and loses those changes, and **Cancel** keeps the editor open. If a save is cancelled or fails, the editor stays open.
+
+Opening a MagicaVoxel file with several models makes a new project: each model becomes a part and MagicaVoxel's scene becomes a scene of instances. Save project writes the parts to `assets` as `<file>-<n>.vx2`.
+
+### Try it: the meadow
+
+`assets/meadow.project.json` is a meadow built from parts: ground, sprigs of grass, flowers in four colours, grass tufts, ferns, mushrooms and bushes, 20 instances of 10 parts in all.
+
+```
+.venv\Scripts\python.exe qt_editor.py ..\assets\meadow.project.json
+```
+
+Select a fern in the Project dock, turn it with `R` and move it with the arrow keys in the Scene view. Double-click it to edit the fern part, and every fern in the meadow follows your drawing.
+
+### Editing a part
+
+**Edit model**, `Enter` or a double click on an instance (in the Project dock or the Scene view) opens its part in the 3D edit view and the slices. The Project dock marks the part being edited with `✎`, and the status bar names it. Draw as on any model: every instance of the part shows each stroke at once.
+
+To get back to the scene, click the Scene tab, or click any instance in the Project dock.
+
+### The render and scenes
+
+The Render dock follows what you work on. While the Scene tab is in use it shows the whole scene, path-traced. While you edit a part (or any model), it shows that model.
+
+![The meadow in the Render dock](figures/current_scene_render.png)
+
+*The meadow's 20 instances, path-traced as one scene.*
+
+### The Project dock
 
 Lists the **Models** (parts) and the **Scenes** with their instances; `*` marks a part that is edited but not saved. Its buttons: **Add model…**, **New scene**, **Add instance** (of the selected model), **Edit model** (or a double click) to open it in the drawing docks, **Remove**, and **Use as brush**.
 
@@ -273,13 +331,13 @@ Click an instance to select it; drag it to move it (dragging elsewhere, or a rig
 
 ### The Transform dock
 
-Type a position; rotate by ±90° or 180° about x, y or z; mirror; **Reset**. **Array** makes linked copies in a **Grid** (counts along x, y, z and a gap) or a **Circle** (count, radius, and optionally each copy turned to face out).
+**Position** is the low corner of the selected instance's box: the arrows next to x, y and z (or the wheel) move it at once, and a typed number moves it on `Enter`. Rotate by ±90° or 180° about x, y or z; mirror; **Reset**. **Array** makes linked copies in a **Grid** (counts along x, y, z and a gap) or a **Circle** (count, radius, and optionally each copy turned to face out).
 
 <img src="figures/current_transform.png" width="480" alt="The Transform dock">
 
 ### A model as a stamp
 
-**Use as brush** in the Outliner makes the selected model (or instance, as it is turned) the brush, until `Esc` or another brush. Its preview follows the mouse in the 3D view.
+**Use as brush** in the Project dock makes the selected model (or instance, as it is turned) the brush, until `Esc` or another brush. Its preview follows the mouse in the 3D view.
 
 - **Attach** adds its voxels, with their colours and materials, where the model is empty.
 - **Paint** gives its colours to the voxels that are there.
@@ -287,11 +345,31 @@ Type a position; rotate by ±90° or 180° about x, y or z; mirror; **Reset**. *
 
 `R` turns the stamp (`Shift+R` back).
 
-> **Note:** the Render dock shows the model being edited, not the whole scene.
+---
+
+## 7. Working with an assistant
+
+An AI assistant that uses the editor's MCP server ([reference](reference.md#mcp-server)) can work on the model open in the window, while you watch and keep editing.
+
+A session goes like this:
+
+1. Start the editor; **File > New** for an empty model of the size you want (a figure: 32 × 32 × 64).
+2. In the chat, ask the assistant to connect (its `connect_editor`). The status bar says *Assistant: connected*.
+3. Talk it through and take turns: it blocks out shapes (ellipsoids, cylinders, cones, lines, boxes), mirrors one side of a figure onto the other, sets single voxels for details; you draw, fix and protect what you like.
+4. To point at something, **Alt + click** it and say "this one": the assistant reads which voxel you picked, and the colour and material you have chosen. It can also look through your eyes: a render from the Render dock's camera and light.
+5. You save (`Ctrl+S`) when you are happy.
+
+- **Tools > Assistant link** lets it in. The link is on by default. The status bar shows *Assistant link: waiting* until an assistant connects, then *Assistant: connected*, and briefly names each of its edits.
+- Its edits land in the window like your own: the views follow at once.
+- Its undo takes back only its own steps. When you edited after it, it cannot undo past your work: that is yours to undo with `Ctrl+Z`.
+- **Protect** (`L`) keeps voxels from it. Draw over them with any brush in the Protect mode; they turn violet. Whatever the assistant does, those voxels stay as they are, and it cannot lift the protection. Shift + left lifts it, and **Tools > Clear protection** lifts all of it. Protection is not an undo step and is not saved with the model.
+- It can work on the open project too: read its parts and instances, and add, move, turn or remove instances. You see each change in the Project dock and the Scene view, and `Ctrl+Z` there takes it back like your own.
+- It can open a model or a project in the window. If the model shown has edits, the editor asks you first.
+- Saving stays yours. The assistant cannot save the model or the project in the window.
 
 ---
 
-## 7. Keys
+## 8. Keys
 
 The 3D-view keys work while the 3D edit view has the focus.
 
@@ -300,7 +378,7 @@ The 3D-view keys work while the 3D edit view has the focus.
 | `Ctrl+N`, `Ctrl+O` | New model, open |
 | `Ctrl+S`, `Ctrl+Shift+S` | Save, save as |
 | `Ctrl+Z`, `Ctrl+Y` | Undo, redo |
-| `A`, `B`, `E`, `P` | Attach, paint, erase, pick |
+| `A`, `B`, `E`, `P`, `L` | Attach, paint, erase, pick, protect |
 | `[`, `]` | Brush size down, up |
 | `R`, `Shift+R` | Turn the stamp, or the selected instance |
 | `Esc` | Stop stamping |

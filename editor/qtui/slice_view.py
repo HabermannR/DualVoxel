@@ -9,7 +9,7 @@ the layer (drag it), face the connected area of the clicked cell's colour in the
 layer, and the sculpting brushes; mirroring as set. A stamp is a 3D-view brush.
 The wheel moves the layer. Empty cells show the nearest voxel behind
 the layer, dimmed, so the slice keeps its place in the figure. With the pick
-tool, left picks too.
+tool, left picks too. Voxels protected from the assistant are tinted violet.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from core.brushes import layer_region, mirrored, placed
 from qtui.brush import SCULPT, brush_edit, held_mode
+from qtui.document import PROTECT_MODES
+from qtui.edit_view import PROTECTED_RGB, PROTECTED_TINT
 
 BACKGROUND = np.array([38, 38, 42], dtype=np.float32)
 GHOST = 0.33  # how strongly the voxels behind the layer show through
@@ -211,6 +213,7 @@ class SliceView(QtWidgets.QWidget):
 
         doc.changed.connect(self.refresh)
         doc.display_changed.connect(self.refresh)
+        doc.protection_changed.connect(self.refresh)
         doc.reset.connect(self.on_reset)
         doc.focus_changed.connect(self.on_focus)
         self.on_reset()
@@ -265,7 +268,9 @@ class SliceView(QtWidgets.QWidget):
         if self.brush is None:
             points = [self._point(u, v) for u, v in cells]
             points = [p for p in points if bool(self.doc.voxel(*p)) == (mode != "attach")]
-            if points:
+            if points and mode in PROTECT_MODES:
+                self.doc.set_protected(points, mode == "protect")
+            elif points:
                 self.doc.set_voxels(points, colour=0 if mode == "erase" else None)
             return
         for u, v in cells:
@@ -273,7 +278,7 @@ class SliceView(QtWidgets.QWidget):
             voxels = brush_edit(self.doc, self.brush, mode, p, self._normal(), hit=p if self.doc.voxel(*p) else None,
                                 in_slice=True, shift=shift)
             if voxels is not None:
-                self.doc.set_voxel_values(*voxels)
+                self.doc.apply_brush(voxels, mode)
 
     def draw_box(self, start, end, mode: str, shift: bool = False):
         """A box brush dragged from cell `start` to cell `end` in this layer."""
@@ -281,7 +286,7 @@ class SliceView(QtWidgets.QWidget):
         voxels = brush_edit(self.doc, self.brush, mode, b, self._normal(), hit=b if self.doc.voxel(*b) else None,
                             box_start=(a, self._normal()), box_end=b, in_slice=True, shift=shift)
         if voxels is not None:
-            self.doc.set_voxel_values(*voxels)
+            self.doc.apply_brush(voxels, mode)
 
     def pick(self, u, v):
         self.doc.pick(*self._point(u, v))
@@ -300,6 +305,10 @@ class SliceView(QtWidgets.QWidget):
         layer = stack[:, :, depth]
         rgb = lookup[keys[:, :, depth]].astype(np.float32)
         empty = layer == 0
+        protected = self.doc.protected()
+        if protected is not None:
+            hit = np.moveaxis(protected.transpose(2, 1, 0), self.d, -1)[:, :, depth] & ~empty
+            rgb[hit] = rgb[hit] * (1 - PROTECTED_TINT) + PROTECTED_RGB * PROTECTED_TINT
         rgb[empty] = BACKGROUND
         if self.ghost_box.isChecked():
             behind = slice(depth + 1, None) if self.behind > 0 else slice(depth - 1, None, -1) if depth else slice(0, 0)

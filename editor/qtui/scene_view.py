@@ -187,7 +187,13 @@ class SceneView(QtWidgets.QWidget):
             self.frame_pending = True
         if self.frame_pending and self.isVisible():
             QtCore.QTimer.singleShot(0, self.frame)
+        self.redraw()
+
+    def redraw(self):
+        """Draw now, and once more through Qt's paint (the interactor's own way, as a mouse drag draws): once
+        the 3D edit view has shown in the same dock area, a draw from outside the view alone can stay off screen."""
         self.plotter.render()
+        self.plotter.interactor.update()
 
     def _floor(self):
         self.plotter.remove_actor("floor", render=False)
@@ -214,8 +220,8 @@ class SceneView(QtWidgets.QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.frame_pending:
-            QtCore.QTimer.singleShot(0, self.frame)
+        # Changes made while hidden (a selection in the Project dock, say) were never drawn: draw them now.
+        QtCore.QTimer.singleShot(0, self.frame if self.frame_pending else self.redraw)
 
     def frame(self):
         self.frame_pending = False
@@ -227,7 +233,7 @@ class SceneView(QtWidgets.QWidget):
         self.plotter.camera_position = [(centre[0] + reach * 0.4, centre[1] - reach * 1.4, centre[2] + reach * 0.9),
                                         tuple(centre), (0, 0, 1)]
         self.plotter.reset_camera()
-        self.plotter.render()
+        self.redraw()
 
     # --- picking and dragging -------------------------------------------------------------
     def instance_at(self, pos):

@@ -1,0 +1,40 @@
+{
+  "format": "voxelpipeline-project",
+  "version": 1,
+  "models": {
+    "sprigs": "meadow_parts/sprigs.vx2",
+    "grass_tuft": "grass_tuft.vx2",
+    "flower_red": "meadow_parts/flower_red.vx2",
+    "flower_blue": "meadow_parts/flower_blue.vx2",
+    "flower_yellow": "meadow_parts/flower_yellow.vx2",
+    "flower_white": "meadow_parts/flower_white.vx2",
+    "fern": "fern.vx2",
+    "mushroom": "mushroom.vx2",
+    "bush": "bush.vx2",
+    "ground": "meadow_parts/ground.vx2"
+  },
+  "scenes": [
+    {"name": "Meadow", "instances": [
+      {"name": "sprigs-1", "model": "sprigs", "position": [1, 1, 6], "orient": "+x+y+z"},
+      {"name": "grass_tuft-1", "model": "grass_tuft", "position": [49, 35, 6], "orient": "-x-y+z"},
+      {"name": "grass_tuft-2", "model": "grass_tuft", "position": [34, 36, 6], "orient": "+x-y+z"},
+      {"name": "flower_red-1", "model": "flower_red", "position": [36, 2, 6], "orient": "+y-x+z"},
+      {"name": "flower_blue-1", "model": "flower_blue", "position": [10, 40, 7], "orient": "+y+x+z"},
+      {"name": "flower_yellow-1", "model": "flower_yellow", "position": [27, 34, 6], "orient": "-x-y+z"},
+      {"name": "flower_yellow-2", "model": "flower_yellow", "position": [24, 25, 7], "orient": "-x+y+z"},
+      {"name": "flower_yellow-3", "model": "flower_yellow", "position": [10, 34, 7], "orient": "-x+y+z"},
+      {"name": "flower_red-2", "model": "flower_red", "position": [56, 10, 8], "orient": "+y+x+z"},
+      {"name": "flower_white-1", "model": "flower_white", "position": [53, 5, 7], "orient": "+x+y+z"},
+      {"name": "flower_red-3", "model": "flower_red", "position": [27, 9, 6], "orient": "-y+x+z"},
+      {"name": "flower_red-4", "model": "flower_red", "position": [38, 17, 7], "orient": "+y-x+z"},
+      {"name": "fern-1", "model": "fern", "position": [16, 30, 7], "orient": "-x+y+z"},
+      {"name": "fern-2", "model": "fern", "position": [1, 13, 6], "orient": "-x+y+z"},
+      {"name": "fern-3", "model": "fern", "position": [44, 22, 6], "orient": "-y+x+z"},
+      {"name": "mushroom-1", "model": "mushroom", "position": [7, 5, 7], "orient": "-x+y+z"},
+      {"name": "mushroom-2", "model": "mushroom", "position": [29, 1, 6], "orient": "+y-x+z"},
+      {"name": "bush-1", "model": "bush", "position": [32, 24, 8], "orient": "-y+x+z"},
+      {"name": "bush-2", "model": "bush", "position": [16, 4, 6], "orient": "+x-y+z"},
+      {"name": "ground-1", "model": "ground", "position": [0, 0, 0], "orient": "+x+y+z"}
+    ]}
+  ]
+}

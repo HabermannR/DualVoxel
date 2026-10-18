@@ -28,8 +28,10 @@ class TransformPanel(QtWidgets.QWidget):
         self.position = []
         for i, name in enumerate(AXIS_NAMES):
             box = QtWidgets.QSpinBox(prefix=f"{name} ", minimum=-LIMIT, maximum=LIMIT)
-            box.setToolTip(f"The box's low corner, {name.lower()} in voxels (Enter applies)")
-            box.editingFinished.connect(self._apply_position)
+            box.setToolTip(f"The box's low corner, {name.lower()} in voxels (arrows and the wheel move it at once; "
+                           "a typed number on Enter)")
+            box.setKeyboardTracking(False)  # typing 49 does not stop at 4 on the way
+            box.valueChanged.connect(self._apply_position)
             grid.addWidget(box, 0, 1 + i)
             self.position.append(box)
         self.buttons = []
@@ -92,7 +94,7 @@ class TransformPanel(QtWidgets.QWidget):
         form.addWidget(make_circle, 3, 2, 1, 2)
         self.buttons += [make_grid, make_circle]
 
-        hint = QtWidgets.QLabel("Select an instance in the scene view or the outliner. Ctrl+Z there undoes "
+        hint = QtWidgets.QLabel("Select an instance in the scene view or the Project dock. Ctrl+Z there undoes "
                                 "scene changes.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #999")

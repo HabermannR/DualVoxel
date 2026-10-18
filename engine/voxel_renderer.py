@@ -173,6 +173,10 @@ class VoxelRenderer:
         right = np.cross(forward, [0, 0, 1])
         right /= np.linalg.norm(right)
         up = np.cross(right, forward)
+        return self.render_camera(width, height, eye, forward, right, up, samples)
+
+    def render_camera(self, width: int, height: int, eye, forward, right, up, samples: int = 64) -> np.ndarray:
+        """A still from a given camera (world units, as the editor's Render dock holds it). Returns RGBA."""
         out = np.zeros((height, width, 4), dtype=np.uint8)
         pointer = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
         self.dll.renderer_set_capture_samples(samples)

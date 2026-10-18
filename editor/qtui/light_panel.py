@@ -17,21 +17,9 @@ import math
 import PySide6QtAds as QtAds
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from core.lights import PRESETS
+
 STEP, TOP = 0.05, 3.0
-# name: (built in: golden flag or None for a custom light, sun direction, sun radiance, horizon, zenith,
-#        backdrop top, backdrop bottom); the first two are the shader's own values (trace.comp)
-PRESETS = {
-    "Golden hour": (True, (-0.86, 0.42, 0.30), (13, 7.2, 2.6), (0.95, 0.62, 0.42), (0.26, 0.32, 0.55),
-                    (0.20, 0.22, 0.36), (1.10, 0.66, 0.36)),
-    "Day": (False, (-0.62, -0.42, 0.62), (8.4, 6.15, 3.45), (0.75, 1, 1.45), (0.3, 0.5, 0.9),
-            (0.045, 0.065, 0.14), (0.09, 0.14, 0.19)),
-    "Noon": (None, (-0.30, 0.17, 0.94), (10, 9.6, 8.8), (0.70, 0.85, 1.10), (0.25, 0.45, 0.95),
-             (0.25, 0.42, 0.75), (0.55, 0.68, 0.85)),
-    "Overcast": (None, (-0.40, -0.30, 0.87), (1.6, 1.6, 1.7), (1.30, 1.30, 1.35), (1.0, 1.02, 1.08),
-                 (0.55, 0.57, 0.60), (0.75, 0.76, 0.78)),
-    "Night": (None, (0.60, -0.45, 0.66), (0.35, 0.42, 0.60), (0.06, 0.08, 0.14), (0.02, 0.03, 0.07),
-              (0.01, 0.015, 0.04), (0.04, 0.05, 0.09)),
-}
 CUSTOM = "Custom"
 COLOURS = (("sun", "Sun colour"), ("horizon", "Sky horizon"), ("zenith", "Sky zenith"),
            ("top", "Background top"), ("bottom", "Background bottom"))

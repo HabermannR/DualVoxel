@@ -42,6 +42,8 @@ class RenderView(QtWidgets.QWidget):
         self.sun, self.sky = 1.0, 1.0  # the built-in daylight; the Light dock sets them
         self.golden = True  # the built-in golden hour, else its daytime light
         self.custom_light = None  # None: the built-in light; else the 18 numbers of renderer_set_light
+        self.source = None  # None: the model being edited; else a callable giving the Model to draw (a scene)
+        self._drawn = None  # the Model drawn last, to reframe when another one takes its place
         doc.reset.connect(self._on_reset)
         doc.material_edited.connect(self._on_material_edited)
         doc.tables_changed.connect(lambda: self._on_material_edited(-1))
@@ -132,6 +134,11 @@ class RenderView(QtWidgets.QWidget):
         if self.engine is not None:
             self.engine.shown_version = -1
 
+    def drawn_model(self):
+        """What the render shows: the source's Model (a scene) when it gives one, else the model being edited."""
+        model = self.source() if self.source is not None else None
+        return model if model is not None else self.doc.model
+
     @property
     def samples(self) -> int:
         return self.engine.samples if self.engine is not None else 0
@@ -140,7 +147,11 @@ class RenderView(QtWidgets.QWidget):
         if not self.isVisible():
             return  # a hidden or closed dock costs no GPU time
         engine = self.engine
-        engine.sync(self.doc.model, self.camera)
+        model = self.drawn_model()
+        if model is not self._drawn:
+            self._drawn = model
+            self._on_reset()
+        engine.sync(model, self.camera)
         moving = time.perf_counter() < self.moving_until
         if engine.frame(self.camera, moving):
             rgba = engine.rgba

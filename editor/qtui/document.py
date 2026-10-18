@@ -7,6 +7,7 @@ any view) is one undo step.
 from __future__ import annotations
 
 import copy
+import weakref
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +36,8 @@ def material_colours(materials) -> np.ndarray:
     return rgb
 
 
-TOOLS = ("attach", "paint", "erase", "pick")
+TOOLS = ("attach", "paint", "erase", "pick", "protect")
+PROTECT_MODES = ("protect", "unprotect")  # the Protect mode, and with Shift lifting it
 
 
 class Document(QtCore.QObject):
@@ -47,11 +49,15 @@ class Document(QtCore.QObject):
     display_changed = QtCore.Signal()  # colours or materials shown in the edit views
     material_edited = QtCore.Signal(int)  # a material's fields changed (live; saved with the model)
     tables_changed = QtCore.Signal()      # the list of materials changed (own materials added, other model)
+    protection_changed = QtCore.Signal()  # voxels the user protected from the assistant
 
     def __init__(self):
         super().__init__()
         self.model = Model()
         self.model.new(32, 32, 64)
+        # Per model (a project's parts each keep theirs), for this session: voxels the assistant may not
+        # change over the live link. Not undo steps and not saved.
+        self._protection = weakref.WeakKeyDictionary()
         self.rgb = np.zeros((256, 3), dtype=np.uint8)  # colour slot -> sRGB
         for c in self.model.colors:
             self.rgb[c["id"]] = c["rgb"]
@@ -59,6 +65,7 @@ class Document(QtCore.QObject):
         self.material = 0
         self.tool = "attach"
         self.show_materials = False  # the edit views colour voxels by material instead of colour
+        self.picked = None  # the voxel last picked (Alt + left, or the Pick mode)
         self.material_rgb = material_colours(self.model.all_materials())
         self._before = None
 
@@ -94,7 +101,9 @@ class Document(QtCore.QObject):
         if not slot:
             return f"({x}, {y}, {z})"
         material = self.model.material_info(self.model.material[z, y, x])
-        return f"({x}, {y}, {z})  colour {slot}  {material['name']}"
+        protected = self.protected()
+        mark = "  protected" if protected is not None and protected[z, y, x] else ""
+        return f"({x}, {y}, {z})  colour {slot}  {material['name']}{mark}"
 
     # --- materials: the shared table, and the model's own (saved with the model) -------
     # Editing never changes the shared table: a shared material is first copied into the
@@ -194,6 +203,7 @@ class Document(QtCore.QObject):
     def pick(self, x: int, y: int, z: int) -> None:
         """Pipette: the voxel's colour and material become current."""
         if self.inside(x, y, z) and self.model.colour[z, y, x]:
+            self.picked = (x, y, z)  # the assistant can ask what the user pointed at
             self.colour = int(self.model.colour[z, y, x])
             self.material = int(self.model.material[z, y, x])
             self.current_changed.emit()
@@ -222,10 +232,12 @@ class Document(QtCore.QObject):
             self.model.colour[:ground] = self.colour
             self.model.material[:ground] = self.material
             self.model.version += 1
+        self._protection.pop(self.model, None)
         self._model_switched()
 
     def open(self, path) -> None:
         self.model.open(path)
+        self._protection.pop(self.model, None)
         self._model_switched()
 
     def edit_model(self, model: Model) -> None:
@@ -236,6 +248,7 @@ class Document(QtCore.QObject):
 
     def _model_switched(self) -> None:
         """Another model (new, opened, a project's): its own materials replace the last one's."""
+        self.picked = None
         if not self.model.has_material(self.material):
             self.material = 0
         self.material_rgb = material_colours(self.model.all_materials())
@@ -243,6 +256,37 @@ class Document(QtCore.QObject):
         self.tables_changed.emit()
         self.current_changed.emit()
         self.changed.emit()
+
+    # --- protection from the assistant (the live link) ---------------------------------------
+    def protected(self, model: Model | None = None) -> np.ndarray | None:
+        """The voxels (bool plane, z y x) the user protected in a model (the shown one by default), or None."""
+        mask = self._protection.get(model or self.model)
+        return mask if mask is not None and mask.any() else None
+
+    def set_protected(self, points, on: bool = True) -> int:
+        """Protect voxels at (x, y, z) points from the assistant, or lift it (on=False). Returns how many changed."""
+        pts = np.atleast_2d(np.asarray(points, dtype=int))
+        mask = self._protection.get(self.model)
+        if mask is None or mask.shape != self.model.colour.shape:
+            mask = self._protection[self.model] = np.zeros(self.model.colour.shape, dtype=bool)
+        if not len(pts):
+            return 0
+        x, y, z = pts.T
+        changed = int((mask[z, y, x] != on).sum())
+        mask[z, y, x] = on
+        if changed:
+            self.protection_changed.emit()
+        return changed
+
+    def clear_protected(self) -> None:
+        if self._protection.pop(self.model, None) is not None:
+            self.protection_changed.emit()
+
+    def apply_brush(self, voxels, mode: str) -> int:
+        """Write what brush_edit gave for a mode: protect or unprotect its voxels, else set them."""
+        if mode in PROTECT_MODES:
+            return self.set_protected(voxels[0], mode == "protect")
+        return self.set_voxel_values(*voxels)
 
     def undo(self) -> None:
         if self.model.undo():

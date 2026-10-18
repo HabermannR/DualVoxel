@@ -8,7 +8,8 @@ set in the Brush dock) in the current mode; Shift + left and Ctrl + left use the
 other two modes (brush.mode_for), Alt + left picks. Right drag orbits, middle
 drag pans, the wheel zooms. Attach adds voxels against the clicked face (or on the floor) and only
 fills empty ones, paint recolours solid voxels, erase removes them, pick takes a
-voxel's colour and material. Brushes: voxel (size, square or circle, flat or a
+voxel's colour and material, protect marks voxels the assistant may not change
+(tinted violet; Shift lifts it). Brushes: voxel (size, square or circle, flat or a
 volume), face (the clicked face's connected flat area), box (drag a
 rectangle in one layer), stamp (a project's model; R turns it, Esc stops), each
 mirrored across the model's centre if asked. A see-through preview, in the
@@ -28,9 +29,12 @@ from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from core.scene import IDENTITY
 from qtui.brush import Brush, brush_edit, held_mode, mode_for
+from qtui.document import PROTECT_MODES
 
 HOVER_COLOUR = {"attach": (0.3, 1.0, 0.4), "paint": (1.0, 0.85, 0.1), "erase": (1.0, 0.3, 0.3),
-                "pick": (0.4, 0.8, 1.0)}
+                "pick": (0.4, 0.8, 1.0), "protect": (0.75, 0.45, 1.0), "unprotect": (0.6, 0.6, 0.65)}
+PROTECTED_RGB = np.array([150, 80, 255], dtype=np.float32)  # protected voxels lean towards this
+PROTECTED_TINT = 0.45
 CLICK_SLOP = 4  # pixels a press may move and still count as a click
 PREVIEW_OPACITY = 0.4
 
@@ -208,6 +212,7 @@ class EditView(QtWidgets.QWidget):
         doc.changed.connect(self._rebuild_timer.start)
         doc.display_changed.connect(self.rebuild)
         doc.tables_changed.connect(self.rebuild)  # the material key may have grown
+        doc.protection_changed.connect(self._rebuild_timer.start)
         doc.reset.connect(self.on_reset)
         doc.current_changed.connect(self._clear_hover)
         self.brush.changed.connect(self._clear_hover)
@@ -235,7 +240,13 @@ class EditView(QtWidgets.QWidget):
             self.plotter.remove_actor("voxels", render=False)
             self.voxel_actor = None
         else:
-            points, quads, colours, _, _ = self.faces
+            points, quads, colours, voxels, _ = self.faces
+            protected = self.doc.protected()
+            if protected is not None:  # tinted, so the user sees what the assistant may not change
+                x, y, z = voxels.T
+                hit = protected[z, y, x]
+                colours = colours.copy()
+                colours[hit] = (colours[hit] * (1 - PROTECTED_TINT) + PROTECTED_RGB * PROTECTED_TINT).astype(np.uint8)
             mesh = pv.PolyData.from_regular_faces(points, quads)
             mesh.cell_data["rgb"] = colours
             self.voxel_actor = self.plotter.add_mesh(
@@ -297,7 +308,7 @@ class EditView(QtWidgets.QWidget):
         voxels = self.brush_voxels(hit, attach, box_end)
         if voxels is None:
             return 0
-        changed = self.doc.set_voxel_values(*voxels)
+        changed = self.doc.apply_brush(voxels, self.mode())
         self.rebuild()  # at once, so the next pick sees the new voxels
         return changed
 
@@ -391,7 +402,7 @@ class EditView(QtWidgets.QWidget):
         sx, sy, sz = points.max(axis=0) - lo + 1
         grid = np.zeros((sz, sy, sx), dtype=np.uint8)
         x, y, z = (points - lo).T
-        stamp = self.brush.kind == "stamp" and mode != "erase"
+        stamp = self.brush.kind == "stamp" and mode not in ("erase", *PROTECT_MODES)
         grid[z, y, x] = colours if stamp else 1
         rgb = self.doc.rgb if stamp else np.array([[0, 0, 0]] + [np.multiply(HOVER_COLOUR[mode], 255)] * 255,
                                                   dtype=np.uint8)

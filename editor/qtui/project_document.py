@@ -29,6 +29,7 @@ class ProjectDocument(QtCore.QObject):
         self.scene: Scene | None = None
         self.instance: Instance | None = None
         self.undo_stack, self.redo_stack = [], []
+        self._saved = self._state()  # the parts and scenes as opened or saved: `modified` compares with it
 
     # --- undo: a scene's instances (as JSON) and which one was selected ---------------------------
     def _snapshot(self):
@@ -62,12 +63,22 @@ class ProjectDocument(QtCore.QObject):
         return self._restore(self.redo_stack, self.undo_stack)
 
     # --- files ------------------------------------------------------------------------------
+    def _state(self):
+        return (tuple(self.project.models),
+                [(s.name, [i.to_json() for i in s.instances]) for s in self.project.scenes])
+
+    def modified(self) -> bool:
+        """Parts added or removed, or scenes or instances changed, since the project was opened or saved
+        (edited parts: `project.modified_models()`)."""
+        return self._state() != self._saved
+
     def _replace(self, project: Project) -> None:
         self.project = project
         self.scene = project.scenes[0] if project.scenes else None
         self.instance = None
         self.undo_stack.clear()
         self.redo_stack.clear()
+        self._saved = self._state()
         self.changed.emit()
         self.selected.emit()
 
@@ -87,6 +98,7 @@ class ProjectDocument(QtCore.QObject):
 
     def save_project(self, name: str | None = None):
         target = self.project.save(name)
+        self._saved = self._state()
         self.changed.emit()
         return target
 

@@ -48,11 +48,19 @@ The editor is Python (PySide6, VTK) and has only been run on Windows so far. The
    uv run qt_editor.py ../assets/alchemist.vx2
    ```
 
+   Or a whole scene built from parts, the meadow: 20 linked copies of grass, flowers, ferns, mushrooms and bushes on a patch of ground (`uv run qt_editor.py ../assets/meadow.project.json`).
+
 Read the [guide](editor/docs/guide.md) to learn the editor, and the [reference](editor/docs/reference.md) for material fields, the `.vx2` file format, the Python API and the folder layout.
+
+## Scenes from parts
+
+A project places models together. Its models are **parts**, each an ordinary `.vx2`, and its **scenes** place them as **instances**: linked copies with a position and a quarter-turn orientation. Paint a part and every instance of it changes, and moving an instance never touches a voxel. The project itself is a short, readable `.project.json` that lists the parts' files and where each instance stands. **Save project** writes it together with every part you edited.
+
+In the editor, the **Project** dock lists the parts and instances, the **Scene** view moves and turns them, and a double click on an instance opens its part for drawing. The Render dock path-traces the whole scene while you work in the Scene tab. The [guide](editor/docs/guide.md#6-scenes-and-parts) has the details.
 
 ## Let an AI assistant build with it
 
-The editor's MCP server gives an assistant such as Claude the same model the editor uses: it can open and create models, paint and erase boxes, set materials, undo, look at a quick preview or a path-traced render, and save. Add it to your assistant's MCP configuration (for Claude Desktop, `claude_desktop_config.json`), with your own path to the `editor` folder (after `uv sync`):
+The editor's MCP server gives an assistant such as Claude the same model the editor uses: it can open and create models, paint and erase boxes, set materials, undo, look at a quick preview or a path-traced render under the editor's light presets, and save. With `connect_editor` it works on the model open in the editor window instead, while you watch and keep editing; voxels you mark with the Protect mode stay out of its reach. It can also read the open project and add, move, turn or remove its instances. Add it to your assistant's MCP configuration (for Claude Desktop, `claude_desktop_config.json`), with your own path to the `editor` folder (after `uv sync`):
 
 ```json
 {

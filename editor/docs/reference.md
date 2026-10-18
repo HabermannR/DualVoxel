@@ -150,19 +150,49 @@ editor.save_render("corpse-skin.png")       # rendered, into outputs/
 editor.save_model("corpse-skin")             # assets/corpse-skin.vx2
 ```
 
-Methods: `new_model`, `open_model`, `save_model`, `info`, `colour_table`, `nearest_colours`, `materials`, `paint_box`, `erase_box`, `shape_slice`, `set_material_box`, `set_material_for_colour`, `replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`, `preview_png`, `render_png`, `save_preview`, `save_render`, `close`. Coordinates are `[x, y, z]` with z up; boxes are inclusive. Protected boxes survive every edit until cleared.
+Methods: `new_model`, `open_model`, `save_model`, `info`, `colour_table`, `nearest_colours`, `materials`, `paint_box`, `erase_box`, `shape_slice`, `set_material_box`, `set_material_for_colour`, `replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`, `preview_png`, `render_png`, `save_preview`, `save_render`, `close`. Coordinates are `[x, y, z]` with z up; boxes are inclusive. Protected boxes survive every edit until cleared. `render_png` and `save_render` take `light`, one of the Light dock's presets (`core/lights.py`): `"Golden hour"` (the default), `"Day"`, `"Noon"`, `"Overcast"` or `"Night"`. Overcast is the one to judge colours under; golden hour turns everything orange.
 
 ### Command line
 
 ```
-.venv\Scripts\python.exe editor_cli.py inspect|preview|render|edit <model> [--output name.png] [--operations ops.json --save name]
+.venv\Scripts\python.exe editor_cli.py inspect|preview|render|edit <model> [--output name.png] [--light Overcast] [--operations ops.json --save name]
 ```
 
 `--operations` takes a JSON list of `{"operation": name, "arguments": {...}}` using the edit methods above.
 
 ### MCP server
 
-`run_mcp.cmd` starts a stdio MCP server for an AI assistant; `mcp.example.json` is a client entry (adjust its paths). Its tools: `open_model`, `new_model`, `model_info`, `colour_table`, `find_colour`, `list_materials`, `paint_box`, `erase_box`, `shape_slice`, `set_material_box`, `set_material_for_colour`, `replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`, `preview` (fast flat views), `render` (a path-traced image; the first call starts the renderer) and `save_model`. Standard output is kept for the protocol; the renderer's log goes to stderr.
+`run_mcp.cmd` starts a stdio MCP server for an AI assistant; `mcp.example.json` is a client entry (adjust its paths). Its 43 tools:
+
+| Group | Tools |
+|---|---|
+| The model | `connect_editor`, `disconnect_editor`, `open_model`, `new_model`, `save_model`, `model_info` |
+| Tables | `colour_table`, `find_colour`, `list_materials` |
+| Drawing | `paint_box`, `erase_box`, `shape_slice` (a rect or circle in one layer), `fill_shape` (ellipsoid, cylinder or cone in a box, solid or hollow), `draw_line` (with a radius), `set_voxels` (single voxels), `mirror` (one half onto the other), `copy_box` |
+| Materials | `set_material_box`, `set_material_for_colour`, `replace_colour` |
+| Other models | `place_model` (copy a saved model's voxels in, turned and mirrored) |
+| Parts and instances | `project_info`, `project_open`, `add_part`, `add_instance`, `move_instance`, `remove_instance`; the server's own project only: `merge_scene` (a scene as the current model), `project_save` |
+| Noise | `speckle` (recolour a box from a weighted palette, scattered or in patches), `noise_terrain` (ground up to a smooth noise height, top, under and soil palettes), `erode_surface` (pits and bumps on what is in a box), `scatter` (small columns on the top surface: sprigs, flower dots, pebbles) |
+| Protection, history | `protect_box`, `clear_protection`, `undo`, `redo` |
+| Reading | `read_slice` (a layer as a grid of colour slots or materials), `voxels_in_box` |
+| Pictures | `preview` (fast flat views), `render` (path-traced under a light preset, `light`; the first call starts the renderer) |
+| The user (connected only) | `user_state` (current colour, material and mode, the voxel last picked with Alt + click, where the last stroke began, what the mouse is over), `user_view` (a render from the Render dock's camera and light) |
+
+Parts and instances (`project_ops.py`) work as in a FEM assembly: a project's models are its parts, and an instance places a part with a position (its box's low corner) and an orientation, linked, so an edit to the part shows in every instance. Connected, they change the project in the window: the Project dock and the Scene view show each change, and each is one step of the scene's undo. `place_model` is the unlinked copy: it writes a model's voxels into the current one. A finished flat model can be broken into parts after the fact when its build is known: `assets/meadow.project.json` is `meadow.vx2` as a ground, sprigs and 18 plant instances, and merges back to the same voxels.
+
+The noise tools (`core/noise.py`) each take a `seed`, so a call repeats exactly, and are one undo step. A palette is `[[colour, weight], ...]`, or `[colour, weight, material]` to set a material too; each colour takes its share of the voxels exactly. `scale` is the size of a patch or a hill in voxels; 0 scatters single voxels. A meadow, for example: `noise_terrain` with grass on top, a darker green under it and soil below, `speckle` on the grass with `only_colour` and a small scale for moss patches, `erode_surface` on a bush, then `scatter` with `on_colours` set to the grass colours for sprigs and flowers.
+
+`.mcp.json` in VoxelPipeline registers the server for Claude Code in that folder; a new session there has the tools. Standard output is kept for the protocol; the renderer's log goes to stderr.
+
+#### The live link to the open editor
+
+By default the server edits a model of its own, which the user sees only in its pictures or after it is saved. `connect_editor` switches the tools to the model open in the editor window; `disconnect_editor` switches back.
+
+- The window listens on `127.0.0.1` at a free port while **Tools > Assistant link** is on (the default). It writes the port and a random token to `%LOCALAPPDATA%\DualVoxel\live_link.json` and removes the file when it closes or the link is turned off. A client must send the token before anything else. `DUALVOXEL_LINK_FILE` moves the file (the tests use their own).
+- Protocol: one JSON object per line each way. A request is `{"op": ..., "args": {...}}`; the answer is `{"result": ...}` or `{"error": "..."}`. The first request is `hello` with `token`. `live_link.py` holds both ends without Qt; `qtui/assistant_link.py` is the window's side.
+- Connected, the edits, `model_info`, `list_materials`, `undo` and `redo` act in the window. A request that arrives during one of the user's strokes waits until the stroke ends, so each stroke stays one undo step. `preview` and `render` draw a copy of the window's model in the server's own renderer, so the Render dock is not disturbed; the copy is only sent again after the model changed. `open_model` opens the file in the window, as File > Open does (a `.project.json` too); when the model shown has edits since it was opened, the window asks the user first and a no is the tool's error. `new_model` and `save_model` refuse: starting and saving models stay the user's.
+- `undo` and `redo` take back only the assistant's own steps. If the user edited since, `undo` refuses.
+- Voxels the user marked in the Protect mode (`L`) are restored after every assistant edit, as its own `protect_box` boxes are. `clear_protection` lifts only its own boxes. `model_info` reports the user's under `user_protected` (count and bounds). The user's protection lasts for the session, for each model or project part, and is not saved.
 
 ---
 

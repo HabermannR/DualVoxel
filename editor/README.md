@@ -62,7 +62,9 @@ render dock.
 - **Brush** (a dock at the top right, as MagicaVoxel's brush panel; it acts
   in the 3D view and the slices). **Mode:** Attach (A) adds voxels against the clicked face
   or the floor and only fills empty ones, Paint (B) recolours voxels that are
-  there, Erase (E) removes them, Pick (P) takes colour and material.
+  there, Erase (E) removes them, Pick (P) takes colour and material,
+  Protect (L) marks voxels an assistant may not change over the live link
+  (tinted violet; Shift lifts it; Tools > Clear protection lifts all).
   **Brush:** Voxel (a size, 1-32, `[` and `]` in the 3D view; square or
   circle; 2D, flat across the clicked face, or 3D, a cube or sphere, resting
   on the face when attaching), Face (the clicked face's whole connected flat
@@ -154,8 +156,12 @@ render dock.
   (its box's low corner) and an orientation, any quarter-turn rotation,
   mirrored or not, written as where the model's axes point (`"+y-x+z"` is a
   quarter turn about z). `..\assets\demo.project.json` places alchemist,
-  skeleton and corpse, and a ring of skeletons.
-  - **Outliner:** Models (✎ the one in the model docks, * edited and not
+  skeleton and corpse, and a ring of skeletons; `..\assets\meadow.project.json`
+  is a meadow of 20 instances of 10 parts. The project file holds no voxels:
+  moving an instance changes only the `.project.json`, drawing in a part only
+  its `.vx2`, and Save project writes both. Closing the editor with unsaved work (the
+  model, the project's instances or its edited parts) asks Save, Discard or Cancel.
+  - **Project:** Models (✎ the one in the model docks, * edited and not
     saved) and Scenes with their instances. Add model…, New scene, Add
     instance (of the selected model), Edit model (or a double click) opens it
     in the slices, 3D edit, colours and materials, Remove.
@@ -164,14 +170,15 @@ render dock.
     and down, Shift 8 voxels at a time; R turns it about z (Shift+R back), M
     mirrors it left-right as seen, Ctrl+D a linked copy beside it, Del deletes,
     Enter or a double click edits its model.
-  - **Transform** (a tab beside Colours): position fields, rotate ±90° or 180°
+  - **Transform** (a tab beside Colours): position fields (the arrows and the
+    wheel move at once, a typed number on Enter), rotate ±90° or 180°
     about x, y or z (keeping the bottom where it was), mirror x, y or z, reset;
     **Array**: a grid of linked copies (counts along x, y, z and a gap) or a
     circle (count, radius, each copy turned to face out).
-  - Ctrl+Z / Ctrl+Y undo scene changes while the outliner, the scene view or
+  - Ctrl+Z / Ctrl+Y undo scene changes while the Project dock, the scene view or
     the transform panel has focus, the model's edits elsewhere. Save project
     also saves edited models (into `..\assets`, as Ctrl+S does).
-  - **Stamp brush:** "Use as brush" in the outliner makes the selected model
+  - **Stamp brush:** "Use as brush" in the Project dock makes the selected model
     (or instance, as it is turned) the Brush dock's stamp until Esc or another
     brush. Its preview follows the cursor, against the face pointed at (or on
     the floor) and centred across it. Attach adds its voxels with their
@@ -179,7 +186,8 @@ render dock.
     to the voxels there, Erase carves its shape (sunk into the clicked face).
     R turns it (Shift+R back). It is read when stamping, so edits to its model
     show in the next stamp.
-  - Not yet: the Render dock shows the model being edited, not the scene.
+  - **Render:** the whole scene, merged, while the Scene tab is in use; the
+    model being edited (a part, or any model) otherwise.
 - One undo step per stroke; View → Reset layout; the layout is remembered.
   `--smoke out.png` waits for the render and saves a screenshot.
 
@@ -203,18 +211,22 @@ brush state) and `qtui\brush_panel.py` (the dock).
     editor.save_render("corpse-skin.png")         # the path tracer
     editor.save_model("corpse-skin")               # assets/corpse-skin.vx2
 
-    .venv\Scripts\python.exe editor_cli.py inspect|preview|render|edit <model> [--operations ops.json --save name]
+    .venv\Scripts\python.exe editor_cli.py inspect|preview|render|edit <model> [--light Overcast] [--operations ops.json --save name]
 
 `run_mcp.cmd` starts the stdio MCP server (`mcp.example.json` has the client
-entry). Its 19 tools: `open_model`, `new_model`, `model_info`,
-`colour_table`, `find_colour`, `list_materials`, `paint_box`, `erase_box`,
-`shape_slice`, `set_material_box`, `set_material_for_colour`,
-`replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`,
-`preview` (fast flat views of the colours) and `render` (the model in
-the path tracer, returned as an image; the first call starts the
-engine) and `save_model`. Coordinates are [x, y, z], z up, boxes inclusive.
-Protected boxes survive every edit until cleared. The server keeps standard
-output for the protocol and sends the renderer's own log lines to stderr.
+entry). Its 30 tools draw (boxes, round shapes, lines, single voxels,
+mirror, copy), set materials, read layers back, protect, undo, and show the
+model as a flat preview or a path-traced render; `docs/reference.md` lists
+them. Coordinates are [x, y, z], z up, boxes inclusive. The server keeps
+standard output for the protocol and sends the renderer's own log lines to
+stderr.
+
+`connect_editor` makes the tools work on the model open in the editor
+window (Tools > Assistant link, on by default): the user watches and can
+edit alongside, the assistant's undo only takes back its own steps, voxels
+the user protected stay, and opening and saving stay the user's.
+`disconnect_editor` goes back to the server's own model. The details are in
+`docs/reference.md`.
 
 Models open from any folder; saves go to `VoxelPipeline\assets` only. A
 MagicaVoxel file of several models opens as a new project: each model a part,
@@ -233,7 +245,9 @@ writes the parts into `assets` as `<file>-<n>.vx2`.
 the render dock's orbit camera; `qtui\` the window; `logic\tools.py` the
 shape and fill helpers the headless API uses; `engine_view.py` the live engine
 view; `voxel_preview.py` the flat preview pictures; `headless_api.py`,
-`mcp_server.py`, `editor_cli.py`. `core\palette.py` keeps the old elemental
+`mcp_server.py`, `editor_cli.py`; `live_link.py` and `qtui\assistant_link.py`
+the live link between the MCP server and the window; `core\lights.py` the
+light presets the Light dock and the headless renders share. `core\palette.py` keeps the old elemental
 palette, which `..\palette\build_colors.py` reads as a source. The earlier
 Dear PyGui editor (`main.py`, `ui\`, `core\state.py`) and its CPU renderer
 were removed on 18 October.
