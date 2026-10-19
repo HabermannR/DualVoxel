@@ -20,12 +20,10 @@ from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from core.scene import place_plane
-from qtui.edit_view import CLICK_SLOP, voxel_faces
+from qtui.edit_view import BIG_STEP, CLICK_SLOP, view_axes, view_delta, voxel_faces
 
 SELECTED_COLOUR = (1.0, 0.85, 0.1)
-BIG_STEP = 8
 Key = QtCore.Qt.Key
-VIEW_MOVES = {Key.Key_Up: (0, 1), Key.Key_Down: (0, -1), Key.Key_Right: (1, 0), Key.Key_Left: (-1, 0)}
 
 
 class SceneStyle(vtkInteractorStyleTrackballCamera):
@@ -138,20 +136,20 @@ class SceneView(QtWidgets.QWidget):
     # --- scene ------------------------------------------------------------------------
     def _mesh(self, instance):
         model = self.pdoc.project.models[instance.model]
-        key = (instance.model, model.version, instance.orient, self.doc.show_materials)
+        key = (instance.model, model.version, instance.orient, self.doc.show_materials, model.table.version)
         if key not in self.meshes:
             colour = place_plane(model.colour, instance.orient)
             if self.doc.show_materials:
                 faces = voxel_faces(colour, self.doc.material_rgb, place_plane(model.material, instance.orient))
             else:
-                faces = voxel_faces(colour, self.doc.rgb)
+                faces = voxel_faces(colour, model.table.rgb)  # the project's colours
             mesh = None
             if faces is not None:
                 points, quads, colours, _, _ = faces
                 mesh = pv.PolyData.from_regular_faces(points, quads)
                 mesh.cell_data["rgb"] = colours
-            for k in [k for k in self.meshes if k[0] == key[0] and k[1] != key[1]]:
-                del self.meshes[k]  # older versions of this model
+            for k in [k for k in self.meshes if k[0] == key[0] and (k[1], k[4]) != (key[1], key[4])]:
+                del self.meshes[k]  # older versions of this model or its colours
             self.meshes[key] = mesh
         return key, self.meshes[key]
 
@@ -296,14 +294,7 @@ class SceneView(QtWidgets.QWidget):
 
     # --- keys -------------------------------------------------------------------------------
     def _view_axes(self):
-        """The scene axes (index, sign) nearest to the view's right and its forward along the floor."""
-        camera = self.plotter.camera
-        forward = np.subtract(camera.focal_point, camera.position)[:2]
-        if not np.any(forward):
-            forward = np.array(camera.up)[:2]
-        right = np.array([forward[1], -forward[0]])
-        pick = lambda v: (int(np.argmax(np.abs(v))), int(np.sign(v[np.argmax(np.abs(v))])) or 1)
-        return pick(right), pick(forward)
+        return view_axes(self.plotter.camera)
 
     def screen_axis(self) -> int:
         """The scene axis closest to left-right on screen, for mirroring as seen."""
@@ -323,15 +314,8 @@ class SceneView(QtWidgets.QWidget):
         k, mods = event.key(), event.modifiers()
         shift = bool(mods & QtCore.Qt.KeyboardModifier.ShiftModifier)
         step = BIG_STEP if shift else 1
-        if k in VIEW_MOVES:
-            (r_axis, r_sign), (f_axis, f_sign) = self._view_axes()
-            across, ahead = VIEW_MOVES[k]
-            delta = [0, 0, 0]
-            delta[r_axis] += across * r_sign * step
-            delta[f_axis] += ahead * f_sign * step
+        if (delta := view_delta(self.plotter.camera, k, step)) is not None:
             self.pdoc.move(*delta)
-        elif k in (Key.Key_PageUp, Key.Key_PageDown):
-            self.pdoc.move(0, 0, step if k == Key.Key_PageUp else -step)
         elif k == Key.Key_R:
             self.pdoc.rotate(2, -1 if shift else 1)
         elif k == Key.Key_M:

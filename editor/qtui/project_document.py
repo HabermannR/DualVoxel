@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtCore
 
-from core.scene import Instance, Project, Scene, mirrored, rotated
+from core.scene import Instance, Project, Scene, mirrored, orient_from_text, resize_shift, rotated
 
 HISTORY_LIMIT = 100
 
@@ -21,6 +21,7 @@ class ProjectDocument(QtCore.QObject):
     changed = QtCore.Signal()   # models, scenes, instances or placements
     selected = QtCore.Signal()  # the scene shown or the selected instance
     edit_model = QtCore.Signal(str)  # open this model in the model docks
+    noted = QtCore.Signal(str)  # what opening or adding did that the user should hear (colours remapped)
 
     def __init__(self, doc):
         super().__init__()
@@ -56,6 +57,20 @@ class ProjectDocument(QtCore.QObject):
         self.selected.emit()
         return True
 
+    def follow_resize(self, model: str, old_size, new_size, offset) -> bool:
+        """A model's box was resized: its instances move to keep their voxels in place, in the scenes and in
+        the undo history (whose positions are of the old box). Returns whether any moved."""
+        moved = self.project.follow_resize(model, old_size, new_size, offset)
+        for stack in (self.undo_stack, self.redo_stack):
+            for _, instances, _ in stack:
+                for data in instances:
+                    if data["model"] == model:
+                        delta = resize_shift(orient_from_text(data["orient"]), old_size, new_size, offset)
+                        data["position"] = [int(p + d) for p, d in zip(data["position"], delta)]
+        if moved:
+            self.changed.emit()
+        return bool(moved)
+
     def undo(self) -> bool:
         return self._restore(self.undo_stack, self.redo_stack)
 
@@ -81,6 +96,13 @@ class ProjectDocument(QtCore.QObject):
         self._saved = self._state()
         self.changed.emit()
         self.selected.emit()
+        self.doc.colour_table_changed.emit()  # another project's colours
+        self._tell()
+
+    def _tell(self) -> None:
+        if self.project.notes:
+            self.noted.emit("\n\n".join(self.project.notes))
+            self.project.notes = []
 
     def new_project(self) -> None:
         self._replace(Project(tables_from=self.doc.model))
@@ -100,12 +122,17 @@ class ProjectDocument(QtCore.QObject):
         target = self.project.save(name)
         self._saved = self._state()
         self.changed.emit()
+        self.doc.colour_table_changed.emit()  # saved: the colours file and its name
         return target
 
     # --- models and scenes ------------------------------------------------------------------
     def add_model(self, path) -> str:
         name = self.project.add_model(path, reuse=[self.doc.model])
         self.changed.emit()
+        if self.project.models[name] is self.doc.model:
+            self.doc.colour_table_changed.emit()  # the shown model is the project's now, on its colours
+            self.doc.display_changed.emit()
+        self._tell()
         return name
 
     def new_scene(self) -> Scene:

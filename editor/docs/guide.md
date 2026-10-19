@@ -41,7 +41,7 @@ or double-click `run_qt_editor.cmd`. The window opens at once. The first time, t
 
 ### Your first model
 
-1. **File → New…** (`Ctrl+N`). Give the size in voxels (up to 256 a side). For a diorama, add a few **floor layers**.
+1. **File → New…** (`Ctrl+N`). Give the size in voxels (up to 256 a side) and how it starts. **Filled**, the default, fills the whole box, as MagicaVoxel does: you can erase, carve and paint at any height straight away. **Floor** fills only some layers at the bottom, for a diorama. **Empty** starts with nothing, so you build up from the floor. Filled voxels take the current colour and material.
 2. Click a colour in the **Colours** dock and a material in the **Materials** dock. **matte** is the plain one.
 3. In the **Brush** dock choose **Attach** and **Voxel**, and a size.
 4. Draw in the 3D edit view with the left mouse button. Right drag turns the view, middle drag moves it, the wheel zooms.
@@ -64,7 +64,9 @@ Every part of the window is a dock. Drag a dock by its tab to move it beside ano
 | Render | The model in the path tracer, on a wooden table in sunlight. |
 | Brush | The mode, the brush, its size and shape, sculpting, mirroring. |
 | Light | Sun and sky, presets, tilt blur, pause. |
-| Colours | The 255 colours; a click picks one. |
+| Model | The model's box: its size, Fit, shifting everything in it, turning and flipping the whole model ([The model's box](#the-models-box)). |
+| Noise | Variation on a box of the model: speckled colours, rolling ground, a rough surface, small plants and pebbles ([Noise](#noise)). |
+| Colours | Whose colours these are (the project's, or the default table), the 255 colours (a click picks one), and changing one. |
 | Materials | The materials, grouped; a click picks one. |
 | Material editor | The current material's settings, live in the render. |
 | Project, Scene, Transform | Several models placed together ([Scenes and parts](#6-scenes-and-parts)). |
@@ -108,6 +110,7 @@ You never have to remember this: the Brush dock shows the current mapping under 
 - **Voxel**: a square or circle (**2D**, flat against the clicked face) or a cube or sphere (**3D**), 1 to 32 voxels. `[` and `]` change the size in the 3D view.
 - **Face**: the clicked face's whole connected flat area. Attach builds a new layer on it; paint and erase take all of it.
 - **Box**: drag a rectangle in the clicked layer.
+- **Ellipsoid**: drag a rectangle on a face and get the ellipsoid over it. **Height** sets how many layers it stands (auto: the rectangle's shorter side, so a square gives a sphere). Attach rests it on the face; paint and erase sink it into the surface. In a slice it is centred on the layer.
 - **Stamp**: a whole model as the brush ([Stamps](#a-model-as-a-stamp)).
 
 ![The 3D edit view with a sphere brush preview](figures/current_edit_view.png)
@@ -140,6 +143,34 @@ Move the layer with the slider, the arrow buttons, the number box or the wheel. 
 
 *The Top slice through the alchemist's legs. The shaded circle is a size-5 circle brush.*
 
+### The model's box
+
+The **Model** dock (a tab beside Brush) changes the box the model lives in, and moves everything in it, as MagicaVoxel's edit mode does. Each change is one undo step.
+
+- **Size**: type a new size (1 to 256 voxels a side) and press **Apply**. The row under the sizes says where the voxels go when the box grows or shrinks along each axis: at the **Low** end, in the **Centre**, or at the **High** end. It starts as centred in x and y and on the floor in z, so a figure keeps standing in the middle. Voxels that end up outside a smaller box are gone; `Ctrl+Z` brings them back.
+- **Fit** (also **Edit → Fit box to voxels**) shrinks the box to the voxels it holds.
+- **Shift** moves every voxel inside the box by the step. With **Wrap** on, what leaves one side comes back in at the other; with it off, it is gone. In the 3D view the arrow keys do the same as seen (Up is away from you), and `Page Up` / `Page Down` move up and down; with Shift, 8 voxels at a time.
+- **Turn and flip** turn the whole model by 90° or 180° about x, y or z, or mirror it. The box turns with it: a 32 × 16 model turned about z is 16 × 32.
+
+When the model is a part of a project, resizing its box keeps its voxels where they were in every scene: its instances move to make up for the box growing at the low end. A shift, turn or flip moves the voxels inside the box, so the instances show them moved.
+
+### Noise
+
+The **Noise** dock (a tab beside Brush) adds the variation that would take thousands of single clicks: speckled colours, rolling ground, a rough surface, small plants and pebbles. Choose a tool at the top (the line under it says what it does), set the box and the colours, and press **Apply**. Unlike the Brush, which changes the voxels under the mouse, a tool runs once over everything in the box. Each run is one undo step.
+
+- **Speckle** recolours the voxels in the box from a list of colours, each taking its share of them. **Patch size** at its lowest, *single voxels*, scatters them; a larger size gathers each colour into patches about that many voxels across. **Surface only** (on to start with) leaves the inside alone; **Only on the current colour** recolours only voxels of the colour that is current when you apply, for moss on grass.
+- **Terrain** fills the box from its floor up to a smooth, hilly height: the **Top** colours on the top layer, the **Under** colours for **Under depth** layers below it, the **Soil** colours down to the floor. An empty Under list repeats Top, an empty Soil list repeats Under. **Hill size** is how wide the hills are; **Detail** 1 gives smooth hills, and each step more adds smaller hills on the larger ones. The hills span the box's height, so a flat box gives gentle ground. Everything in the box at or below the ground becomes ground; what is above it stays.
+- **Erode** roughens the surface in the box. **Pits** is the percentage of surface voxels taken away, **Bumps** the percentage of what is left that grows a voxel beside or above itself, in its own colour. **Patch size** gathers the pits as in Speckle. **Keep the bottom layer** (on to start with) leaves the box's lowest layer whole, so the model still stands.
+- **Scatter** puts small columns on the top surface in the box: sprigs, flower dots, pebbles. A column ends in one of the **Tips** colours, with the **Stem** colours under it (an empty Stem list makes the whole column tip). **Height** counts the voxels in a column, tip included; **Random heights** makes some shorter, down to the tip alone. **Density** is the percentage of open top voxels that get a column. **Only on the current colour** puts them only on voxels of the current colour, for flowers on the grass and not on the path.
+
+**The box.** The dock has a box of its own: two corners, both ends included, with its size in voxels under them. It starts as the whole model, and **Whole model** sets it back. **Picked** moves a corner to the voxel last picked with Alt + left. While the dock is in sight, the 3D view outlines the box and the slices show it as a rectangle, filled faintly when the slice's layer is inside it and dashed when the box lies in front of it or behind it. With **Drag box** on, a left drag in the Front, Side or Top slice sets the box's two axes in that slice and leaves the third; Alt + left still picks, and the 3D view still draws.
+
+**Colours.** **Add current**, which shows a swatch of the current colour, puts it on a list with the current material. An empty list says what to do, or which colours it falls back to. Each entry has a weight: its share against the others. Adding the same colour and material again raises its weight. Click an entry to make it the current colour and material, `×` takes it off. The voxels a tool colours take the entry's material too.
+
+**Seed and Reroll.** The same seed gives the same voxels. **Reroll** undoes the last run, if nothing came after it, and runs again with a new seed: press it until you like the pattern.
+
+The dock ignores protection: protecting voxels only stops the assistant ([section 7](#7-working-with-an-assistant)), never your own edits.
+
 ---
 
 ## 4. Colours and materials
@@ -153,7 +184,40 @@ The renderer combines the two: red + matte is a brick, red + glass is ruby glass
 
 ### Colours
 
-The **Colours** dock holds a table of 255 colours. Click one to make it current; hover for its number and hex value. All models share this table.
+A voxel does not store a colour. It stores a **slot number** from 1 to 255, and a **colour table** says what each slot looks like. Every time the editor hands a model to the renderer, it sends the table along, so changing a slot changes every voxel with that number at once.
+
+The **Colours** dock holds the 255 colours. Click one to make it current; hover for its number and hex value.
+
+**Order** changes only how the colours are laid out, never their numbers or your models:
+
+| Order | Layout |
+|---|---|
+| Table | the table's own ramps, in slot order |
+| Hue | greys first, then bands of hue (red, orange, yellow, green, cyan, blue, violet), each band dark to light |
+| Lightness | dark to light in steps, each step running round the hues |
+| Chroma | greys, then muted to vivid in steps, each step running round the hues |
+| Similar | a chain from black in which each next colour is the closest one left, so neighbours look alike |
+
+While the colour dialog is open, the swatch you are changing stays where it is. The grid is laid out again when the dialog closes.
+
+**Colours belong to a project.** Each project keeps its own table, `<project>.colors.json`, beside its `.project.json`. Every part of the project uses it. The file is plain JSON with one line per slot, so you can also read it, or compare two versions, in a text editor. A new project starts as a copy of the default table, `palette/colors.json`.
+
+The top of the Colours dock always says whose colours you are looking at:
+
+| The dock says | What it is | Can you change it? |
+|---|---|---|
+| **meadow colours** · `meadow.colors.json` | the open project's own | yes |
+| **New project's colours** · no file yet | a project not saved yet | after **Scene → Save project** |
+| **Default colours** · `palette/colors.json` | the table `palette/build_colors.py` builds, for models outside any project | never in the editor |
+| **demo colours** · read-only | a model opened on its own that was saved with another project's colours | open that project |
+
+To change a colour, make it current and then type a new hex value (Enter applies it) or click **Change colour…**. The colour dialog shows each change live in the 3D view, the slices, the scene and the render; **Cancel** puts the old colour back. The line underneath tells you how many voxels use the colour, in how many of the project's models, and which other slot is closest. When the two are almost the same (ΔE under 3), the line turns amber, because two slots you cannot tell apart are a wasted slot.
+
+A small mark in a swatch's corner shows a changed slot: yellow while the change is not saved yet, white once it is saved but still differs from the default table. **Revert** puts the current slot back to how it was last saved, and **Revert all** does that for every slot.
+
+**Save project** writes the colours file and saves every part again, because each `.vx2` records which colours it was saved with. `Ctrl+S` while the colours have unsaved changes runs Save project first.
+
+**A model with other colours.** A model opened on its own (**File → Open**) keeps the colours it was saved with. **Add model…** puts a model into the project. If the model was saved with other colours (another project's), each of its slots moves to the nearest colour of this project. It then becomes a copy of its own, saved with the project as `<file>-<project>.vx2`, and a message says so. The original file stays as it was, so the other project keeps it. A stamp from a model with other colours lands on the nearest colours in the same way.
 
 <img src="figures/current_colours.png" width="468" alt="The Colours dock">
 
@@ -221,6 +285,17 @@ The Render dock shows the model in a GPU path tracer, standing on a wooden table
 
 ![The Render dock](figures/current_render.png)
 
+#### Rendering a picture
+
+**File → Render picture…** (`Ctrl+Shift+R`), or **Render picture…** in the Light dock, saves a high-resolution picture of what the Render dock shows: its camera, its light and the tilt blur.
+
+- **Width**, **Height**: up to 8192 each. By default the height follows the Render dock's shape; typing a height of your own lets go of it.
+- **Samples**: per pixel; more is smoother and slower. 512 to 1024 is enough for a final picture. 2160 × 2700 at 768 samples takes about a minute.
+- **Finish**: `none` saves the picture as traced, which is right for judging colours. `film` adds a tone curve, soft bloom and a vignette. `night` adds strong bloom on glows and reds, cool shadows and grain.
+- **File**: a PNG, by default in `editor/outputs/`, named after the model.
+
+The picture draws in the Render dock. The corner shows its size and the samples so far, and the window stays usable. While it draws, edits and camera moves wait for the next live picture. The button in the Light dock turns into **Cancel picture**. When the picture is done, the status bar says where it was saved.
+
 ### The Light dock
 
 The **Light** dock (a tab beside Brush) sets the sun and the sky. Only the picture changes, never the model.
@@ -234,6 +309,7 @@ The **Light** dock (a tab beside Brush) sets the sun and the sky. Only the pictu
 - **Default light**: back to the standard golden hour.
 - **Lights off**: sun and sky off, to see what glows on its own.
 - **Tilt blur**: the miniature-style blur above and below the model; off shows everything sharp.
+- **Render picture…**: a high-resolution picture of the Render dock's view, saved as a PNG ([Rendering a picture](#rendering-a-picture)).
 - **Pause render** (`F9`): stops drawing and frees the GPU, keeping the last picture.
 
 Changing the direction or a colour turns the preset into **Custom**.
@@ -284,9 +360,10 @@ A project has two kinds of change, saved in two places:
 | You change | It lives in |
 |---|---|
 | Instances: add, move, turn, mirror, copy, delete | the `.project.json` |
-| A part's voxels, colours or materials | that part's `.vx2` |
+| A part's voxels or materials | that part's `.vx2` |
+| What a colour looks like | the project's `<project>.colors.json` |
 
-**Save project** writes both: the project file, and every part you edited (the Project dock marks those with `*`). `Ctrl+S` while editing a part saves only that part.
+**Save project** writes all of them: the project file, the colours file, and every part you edited (the Project dock marks those with `*`). After a colour change it saves every part. `Ctrl+S` while editing a part saves only that part, unless the colours have unsaved changes: then it runs Save project.
 
 Closing the editor with unsaved work asks first. One dialog lists what is unsaved: the model you are editing (when it is not a part of the project), and the project with the parts you edited. **Save** runs Save project for the project (asking for a name if it has none yet) and `Ctrl+S` for the model, then closes. **Discard** closes and loses those changes, and **Cancel** keeps the editor open. If a save is cancelled or fails, the editor stays open.
 
@@ -377,6 +454,7 @@ The 3D-view keys work while the 3D edit view has the focus.
 |---|---|
 | `Ctrl+N`, `Ctrl+O` | New model, open |
 | `Ctrl+S`, `Ctrl+Shift+S` | Save, save as |
+| `Ctrl+Shift+R` | Render a picture |
 | `Ctrl+Z`, `Ctrl+Y` | Undo, redo |
 | `A`, `B`, `E`, `P`, `L` | Attach, paint, erase, pick, protect |
 | `[`, `]` | Brush size down, up |
@@ -384,6 +462,6 @@ The 3D-view keys work while the 3D edit view has the focus.
 | `Esc` | Stop stamping |
 | `F9` | Pause or resume the render |
 | `Ctrl+Alt+S` | Save the project |
-| Arrows, `Page Up`/`Page Down` | Move the selected instance (Shift: 8 voxels) |
+| Arrows, `Page Up`/`Page Down` | In the 3D view: shift the model in its box. In the Scene view: move the selected instance. Shift: 8 voxels |
 | `M`, `Ctrl+D`, `Del` | Mirror, duplicate, delete the selected instance |
 | `Ctrl+Q` | Quit |

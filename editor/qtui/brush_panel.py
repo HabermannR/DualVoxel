@@ -1,4 +1,4 @@
-"""The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, stamp, or a sculpting
+"""The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, ellipsoid, stamp, or a sculpting
 brush: smooth, erode, grow) with its options, and mirroring, for the 3D edit view and the slices;
 MagicaVoxel's brush panel, plainer. The sculpting brushes reshape what is there in the size and shape set
 below, whatever the mode; Shift swaps erode and grow.
@@ -26,11 +26,14 @@ KIND_TIPS = {
     "voxel": "A square, circle, cube or sphere of the size below",
     "face": "The clicked face's whole connected flat area: attach builds a layer on it, paint and erase take it",
     "box": "Drag a rectangle in the clicked layer (a click: one voxel)",
+    "ellipsoid": "Drag a rectangle on a face: the ellipsoid over it. Attach rests it on the face, paint and "
+                 "erase sink it in (in a slice: centred on the layer)",
     "stamp": "A project's model: select it in the Project dock, then Use as brush",
     "smooth": "Rounds off what is in the brush: fills hollows, takes off bumps",
     "erode": "Takes the outer skin of voxels off what is in the brush (Shift: grow)",
     "grow": "Adds a skin of voxels to what is in the brush, in the colours beside it (Shift: erode)",
 }
+PAGES = ("voxel", "face", "box", "ellipsoid", "stamp")  # the options shown for each brush kind
 MODE_TIPS = {"attach": "Add voxels against the clicked face; never overwrites",
              "paint": "Recolour voxels that are there", "erase": "Remove voxels",
              "pick": "Take a voxel's colour and material",
@@ -60,7 +63,7 @@ def install_brush_panel(window) -> "BrushPanel":
             sizes[index + 1 if index + 1 < len(sizes) else index - 1] += spare
             splitter.setSizes(sizes)
             window.default_layout = window.dock_manager.saveState(window_module.LAYOUT_VERSION)
-    QtCore.QTimer.singleShot(100, fit)
+    QtCore.QTimer.singleShot(100, panel, fit)  # not once the window has gone
     return panel
 
 
@@ -106,7 +109,8 @@ class BrushPanel(QtWidgets.QWidget):
         self.mouse_label.setToolTip("What the left button does in the 3D view and the slices; right drag orbits, "
                                     "middle drag pans")
         grid.addWidget(self.mouse_label, 1, 1)
-        row, self.kind_buttons = segmented([("voxel", "Voxel"), ("face", "Face"), ("box", "Box"), ("stamp", "Stamp")],
+        row, self.kind_buttons = segmented([("voxel", "Voxel"), ("face", "Face"), ("box", "Box"),
+                                            ("ellipsoid", "Ellipsoid"), ("stamp", "Stamp")],
                                            KIND_TIPS, self._set_kind)
         grid.addWidget(label("Brush"), 2, 0)
         grid.addLayout(row, 2, 1)
@@ -150,11 +154,24 @@ class BrushPanel(QtWidgets.QWidget):
             widget.setStyleSheet("color: #999")
             return widget
 
+        # the ellipsoid brush's height
+        ellipsoid = QtWidgets.QWidget()
+        options = QtWidgets.QGridLayout(ellipsoid)
+        options.setContentsMargins(0, 0, 0, 0)
+        self.height_box = QtWidgets.QSpinBox(minimum=0, maximum=MAX_SIZE, suffix=" vx", specialValueText="auto")
+        self.height_box.setToolTip("Layers along the face's normal; auto: the rectangle's shorter side")
+        self.height_box.valueChanged.connect(lambda v: self.brush.set(height=v))
+        options.addWidget(label("Height"), 0, 0)
+        options.addWidget(self.height_box, 0, 1)
+        options.addWidget(note(KIND_TIPS["ellipsoid"] + "."), 1, 0, 1, 3)
+        options.setColumnStretch(2, 1)
+
         self.stamp_note = note()
         self.options = QtWidgets.QStackedWidget()
         self.options.addWidget(voxel)
         self.options.addWidget(note(KIND_TIPS["face"] + "."))
         self.options.addWidget(note(KIND_TIPS["box"] + "."))
+        self.options.addWidget(ellipsoid)
         self.options.addWidget(self.stamp_note)
         grid.addWidget(self.options, 4, 0, 1, 2)
 
@@ -180,7 +197,7 @@ class BrushPanel(QtWidgets.QWidget):
     def _set_kind(self, kind):
         if kind == "stamp" and self.brush.stamp is None:
             self.refresh()  # nothing to stamp yet: the note says how
-            self.options.setCurrentIndex(3)
+            self.options.setCurrentIndex(PAGES.index("stamp"))
             return
         self.brush.set(kind=kind)
 
@@ -200,10 +217,10 @@ class BrushPanel(QtWidgets.QWidget):
                                      f"Ctrl: {mode_for(tool, ctrl=True)} · Alt: pick")
         self.kind_buttons[b.kind].setChecked(True)
         page = "voxel" if b.kind in SCULPT else b.kind  # sculpting takes the voxel brush's size and shape
-        self.options.setCurrentIndex(("voxel", "face", "box", "stamp").index(page))
-        for widget in (self.size_slider, self.size_box):
+        self.options.setCurrentIndex(PAGES.index(page))
+        for widget, value in ((self.size_slider, b.size), (self.size_box, b.size), (self.height_box, b.height)):
             widget.blockSignals(True)
-            widget.setValue(b.size)
+            widget.setValue(value)
             widget.blockSignals(False)
         self.shape_buttons[b.round].setChecked(True)
         self.dims_buttons[b.volume].setChecked(True)

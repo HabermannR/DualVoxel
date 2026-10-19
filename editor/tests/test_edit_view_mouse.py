@@ -10,7 +10,7 @@ from pathlib import Path
 
 EDITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EDITOR))
-os.environ.setdefault("DUALVOXEL_LINK_FILE", str(Path(tempfile.mkdtemp()) / "live_link.json"))  # the window's link
+import sandbox  # noqa: E402,F401  the user's own editor and settings are left alone
 
 
 @unittest.skipIf(os.environ.get("SKIP_QT"), "needs a native Qt window")

@@ -5,7 +5,8 @@ voxel): cube and sphere are volumes, square and circle are flat, lying across
 the clicked face (perpendicular to its normal); offsets are centred on the
 anchor voxel (an even size reaches one further to the low side). The face brush
 takes the clicked face's connected flat area, the box brush a rectangle between
-two voxels in one layer. Mirroring repeats the voxels across the model's centre.
+two voxels in one layer, the ellipsoid brush the ellipsoid over such a rectangle,
+standing up from it. Mirroring repeats the voxels across the model's centre.
 """
 from __future__ import annotations
 
@@ -80,6 +81,30 @@ def box(start, end, normal) -> np.ndarray:
     lo[axis] = hi[axis] = start[axis]
     ranges = [np.arange(lo[a], hi[a] + 1) for a in range(3)]
     return np.stack(np.meshgrid(*ranges, indexing="ij"), axis=-1).reshape(-1, 3)
+
+
+def ellipsoid(start, end, normal, height: int = 0, outward: bool = True, centred: bool = False) -> np.ndarray:
+    """The ellipsoid filling the box over the rectangle between two voxels: across the normal it spans the
+    rectangle (in the start voxel's layer), along it `height` layers (0: the rectangle's shorter side) from
+    the start layer, out along the normal (attach: resting on the face) or into the surface; `centred` puts
+    the start layer in its middle (a slice). As the assistant's fill_shape: voxel centres inside it."""
+    normal = np.asarray(normal)
+    axis = int(np.argmax(np.abs(normal)))
+    lo, hi = np.minimum(start, end), np.maximum(start, end)
+    across = [a for a in range(3) if a != axis]
+    height = max(1, min(MAX_SIZE, int(height))) if height else int(min(hi[a] - lo[a] + 1 for a in across))
+    layer = int(start[axis])
+    if centred:
+        lo[axis] = layer - (height - 1) // 2
+    elif outward == (normal[axis] > 0):
+        lo[axis] = layer
+    else:
+        lo[axis] = layer - height + 1
+    hi[axis] = lo[axis] + height - 1
+    ranges = [np.arange(lo[a], hi[a] + 1) for a in range(3)]
+    grid = np.stack(np.meshgrid(*ranges, indexing="ij"), axis=-1).reshape(-1, 3)
+    d = (grid + 0.5 - lo) / ((hi - lo + 1) / 2) - 1  # -1..1 across the box
+    return grid[(d ** 2).sum(axis=1) <= 1]
 
 
 def mirrored(points, size, axes):

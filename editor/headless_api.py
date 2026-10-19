@@ -1,7 +1,8 @@
 """Python access to the editor's two-byte model, without the window: the base of the MCP server and the CLI.
 
 Coordinates are (x, y, z) integers, z up, box ends inclusive. Colours are slots
-1-255 in VoxelPipeline/palette/colors.json (0 erases), materials ids in
+1-255 in the model's colour table (0 erases): its project's <name>.colors.json, or
+VoxelPipeline/palette/colors.json (`colour_table` lists them), materials ids in
 materials.json. Protected boxes are restored after every edit. `render` draws
 with the path tracer (VoxelRenderer.dll), loaded on first use.
 """
@@ -19,11 +20,15 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from core import noise  # noqa: E402
 from core.lights import apply_preset, apply_state, preset_name  # noqa: E402
-from core.model import Model, ROOT as PIPELINE  # noqa: E402
+from core.model import ANCHORS, Model, ROOT as PIPELINE, transform_plane  # noqa: E402
 from logic.tools import commit_shape  # noqa: E402
+# here, on the main thread: loaded first on the MCP server's worker thread, scipy's DLLs hang on Windows
+from postprocess import LOOKS, finish  # noqa: E402
 from voxel_preview import render_preview  # noqa: E402
 
 OUTPUTS = ROOT / "outputs"
+PICTURE_LIMITS = (1920, 1080, 1024)  # width, height, samples of a picture handed back (render, user_view)
+FILE_LIMITS = (8192, 8192, 4096)  # the same for a picture saved to a file (save_render): print sizes
 
 
 def synchronized(method):
@@ -41,13 +46,25 @@ class VoxelEditor:
         self.model = model or Model()
         self._engine = None
         self._engine_shown = (None, -1)  # (model, version) last loaded into the engine
-        self.palette = np.zeros((256, 4), dtype=np.uint8)
-        for c in self.model.colors:
-            self.palette[c["id"]] = [*c["rgb"], 255]
         if model is None:
             self.new_model()
         else:
-            self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+            self._unprotect_all()
+
+    def _unprotect_all(self) -> None:
+        """No protected boxes (another model, or its size changed beyond following)."""
+        self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+        self._seen = self.model.transform_count
+
+    def _follow(self) -> None:
+        """Move the protected boxes with each whole-model transform since they were last moved (their undo
+        and redo too, and the window's own over the live link)."""
+        for _, op, old_size, _ in self.model.transforms_since(self._seen) or []:
+            if self._protected.shape == tuple(old_size[::-1]):
+                self._protected = transform_plane(self._protected, op)
+        self._seen = self.model.transform_count
+        if self._protected.shape != self.model.colour.shape:
+            self._unprotect_all()
 
     # --- files -----------------------------------------------------------------------
     @synchronized
@@ -56,14 +73,14 @@ class VoxelEditor:
             if type(d) is not int:
                 raise ValueError("Each dimension must be an integer.")
         self.model.new(x, y, z)
-        self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+        self._unprotect_all()
         return self.info()
 
     @synchronized
     def open_model(self, path, material_overrides=None):
         overrides = {int(k): int(v) for k, v in (material_overrides or {}).items()}
         self.model.open(path, overrides)
-        self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+        self._unprotect_all()
         return self.info()
 
     @synchronized
@@ -80,6 +97,14 @@ class VoxelEditor:
         info["bounds"] = [solid.min(axis=0)[::-1].tolist(), solid.max(axis=0)[::-1].tolist()] if len(solid) else None
         info["protected_voxels"] = int((self._protected & (self.model.colour > 0)).sum())
         return info
+
+    @staticmethod
+    def palette(model) -> np.ndarray:
+        """Slot -> RGBA for the flat previews, from the model's colour table."""
+        rgba = np.full((256, 4), 255, dtype=np.uint8)
+        rgba[:, :3] = model.table.rgb
+        rgba[0] = 0
+        return rgba
 
     @synchronized
     def colour_table(self, family=None):
@@ -106,13 +131,14 @@ class VoxelEditor:
         locked = self._locked()
         if locked is not None:
             keep = keep | locked
-        if changed and keep.any():
-            before_c, before_m = self.model.undo_stack[-1]
-            self.model.colour[keep] = before_c[keep]
-            self.model.material[keep] = before_m[keep]
-            changed = int(((self.model.colour != before_c) | (self.model.material != before_m)).sum())
-            if not changed:
-                self.model.undo_stack.pop()
+        step = self.model.undo_stack[-1] if changed else None
+        if step is not None and keep[step.box].any():
+            box, kept = step.box, keep[step.box]
+            before_c, before_m = step.values()  # the edit's box as it was
+            self.model.undo_stack.pop()
+            self.model.colour[box][kept] = before_c[kept]
+            self.model.material[box][kept] = before_m[kept]
+            changed = self.model.record(before_c, before_m, box)
             self.model.version += 1
         return {"changed_voxels": changed, **self.info()}
 
@@ -155,15 +181,11 @@ class VoxelEditor:
         self.model._check_material(material)
         cfg = {"u": u, "v": v, "d": d, "inv_u": False, "inv_v": False}
         grid, mat = self.model.colour.transpose(2, 1, 0), self.model.material.transpose(2, 1, 0)
-        self.model.checkpoint()
-        before = self.model.undo_stack[-1]
+        before = self.model.colour.copy(), self.model.material.copy()
         commit_shape(grid, cfg, *start, *end, depth, shape, colour,
                      coord_func=lambda c, a, b, dep: _coord(c, a, b, dep), mat_grid=mat, mat_val=material)
         self.model.touched()
-        changed = int(((self.model.colour != before[0]) | (self.model.material != before[1])).sum())
-        if not changed:
-            self.model.undo_stack.pop()
-        return self._finish(changed)
+        return self._finish(self.model.record(*before))
 
     @synchronized
     def set_material_box(self, start, end, material):
@@ -278,6 +300,69 @@ class VoxelEditor:
                 moved[target] = moved[other[target]]
         return self._finish(self.model._edit(apply))
 
+    # --- the whole model: its box and everything in it (each one undo step) --------------------------
+    def _transform(self, op):
+        """Apply a whole-model op unless it would lose protected voxels; the protected boxes move with it."""
+        keep = self._protected
+        locked = self._locked()
+        if locked is not None:
+            keep = keep | locked
+        keep = keep & (self.model.colour > 0)
+        if op is not None and keep.any():
+            lost = int(keep.sum()) - int(transform_plane(keep, op).sum())
+            if lost:
+                raise ValueError(f"That would lose {lost} protected voxels (outside the box): move or shrink "
+                                 "it another way, or lift the protection first.")
+        lost = self.model.transform(op)
+        self._follow()
+        return {"changed": op is not None, "lost_voxels": lost, **self.info()}
+
+    @staticmethod
+    def _check_axis(axis):
+        if axis not in ("x", "y", "z"):
+            raise ValueError("axis is x, y or z")
+        return "xyz".index(axis)
+
+    @synchronized
+    def resize_model(self, size, anchor=None, offset=None):
+        """A new box [x, y, z] (1-256 a side). The voxels are placed by anchor, per axis "low", "centre" or
+        "high" (one for all, or [x, y, z]; default x and y centred, z low: on the floor), or at offset [x, y, z]
+        (where the old voxel [0, 0, 0] lands). Voxels left outside are lost."""
+        if len(size) != 3 or any(type(v) is not int for v in size):
+            raise ValueError("size is [x, y, z] integers")
+        if offset is not None and (len(offset) != 3 or any(type(v) is not int for v in offset)):
+            raise ValueError("offset is [x, y, z] integers")
+        anchor = anchor or ["centre", "centre", "low"]
+        if any(a not in ANCHORS for a in ([anchor] if isinstance(anchor, str) else anchor)):
+            raise ValueError(f"anchor is {', '.join(ANCHORS)}, one or per axis")
+        return self._transform(self.model.resize_op(size, offset, anchor))
+
+    @synchronized
+    def fit_model(self):
+        """Shrink the box to its solid voxels."""
+        return self._transform(self.model.fit_op())
+
+    @synchronized
+    def shift_model(self, offset, wrap=True):
+        """Move every voxel by [dx, dy, dz] inside the box; wrap brings what leaves one side in at the other,
+        else it is lost."""
+        if len(offset) != 3 or any(type(v) is not int for v in offset):
+            raise ValueError("offset is [dx, dy, dz] integers")
+        return self._transform(self.model.shift_op(offset, bool(wrap)))
+
+    @synchronized
+    def rotate_model(self, axis="z", turns=1):
+        """Turn the whole model by quarter turns about an axis, counter-clockwise looking down it; the box
+        turns with it."""
+        if type(turns) is not int:
+            raise ValueError("turns is a whole number of quarter turns")
+        return self._transform(self.model.rotate_op(self._check_axis(axis), turns))
+
+    @synchronized
+    def flip_model(self, axis="x"):
+        """Mirror the whole model along an axis."""
+        return self._transform(self.model.flip_op(self._check_axis(axis)))
+
     @synchronized
     def copy_box(self, start, end, offset, move=False):
         """Copy the solid voxels of an inclusive box by `offset` [dx, dy, dz] (those landing outside are dropped);
@@ -314,6 +399,7 @@ class VoxelEditor:
             raise ValueError("position is [x, y, z] integers")
         source = Model()
         source.open(resolve(path))
+        source.remap_to(self.model.table)  # saved with other colours: the nearest of this model's
         o = ProjectOps._orient(orient, turn, mirror)
         colour, material = place_plane(source.colour, o), place_plane(source.material, o)
         if (material >= 128).any():
@@ -321,15 +407,17 @@ class VoxelEditor:
         return self._finish(self.model._edit(lambda c, m: stamp(c, m, colour, material, position, empty_only)))
 
     @synchronized
-    def load_volume(self, colour, material, local=()):
-        """Replace the model with these (z, y, x) planes (a merged scene), unsaved."""
+    def load_volume(self, colour, material, local=(), table=None):
+        """Replace the model with these (z, y, x) planes (a merged scene, on its project's colour table), unsaved."""
+        if table is not None:
+            self.model.table = table
         self.model._replace(np.ascontiguousarray(colour, dtype=np.uint8), np.ascontiguousarray(material, dtype=np.uint8))
         self.model.path = None
         self.model.local = {m["id"]: m for m in local}
         self.model.saved_local = {}
         self.model.undo_stack.clear()
         self.model.redo_stack.clear()
-        self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+        self._unprotect_all()
         return self.info()
 
     # --- noise: variation that would take thousands of single voxels ----------------------------------
@@ -569,11 +657,15 @@ class VoxelEditor:
 
     @synchronized
     def undo(self):
-        return {"changed": self.model.undo(), **self.info()}
+        changed = self.model.undo()
+        self._follow()
+        return {"changed": changed, **self.info()}
 
     @synchronized
     def redo(self):
-        return {"changed": self.model.redo(), **self.info()}
+        changed = self.model.redo()
+        self._follow()
+        return {"changed": changed, **self.info()}
 
     # --- pictures ------------------------------------------------------------------------
     @synchronized
@@ -581,22 +673,28 @@ class VoxelEditor:
         """Flat editing views (front, back, right, isometric) of the voxel colours; fast, no lighting.
         model: another model to show (the open editor's copy), else this one."""
         model = model or self.model
-        image = render_preview(model.colour.transpose(2, 1, 0), self.palette)
+        image = render_preview(model.colour.transpose(2, 1, 0), self.palette(model))
         out = io.BytesIO()
         image.save(out, format="PNG")
         return out.getvalue()
 
     @synchronized
     def render_png(self, yaw=-25.0, pitch=10.0, width=640, height=640, samples=64, light="Golden hour",
-                   model: Model | None = None, view: dict | None = None):
+                   model: Model | None = None, view: dict | None = None, look="none"):
         """The model in the path tracer, on the wooden table under one of the Light dock's presets
         (Golden hour, Day, Noon, Overcast, Night). model: another model to draw, else this one. view: the
         editor's Render dock camera and light ({"eye", "forward", "right", "up", "light"}) instead of yaw,
-        pitch and the preset."""
+        pitch and the preset. look: a finish from postprocess.LOOKS ("none", "film", "night")."""
+        return self._render(yaw, pitch, width, height, samples, light, model, view, look, PICTURE_LIMITS)
+
+    def _render(self, yaw, pitch, width, height, samples, light, model, view, look, limits):
         model = model or self.model
-        if not (16 <= width <= 1920 and 16 <= height <= 1080 and 1 <= samples <= 1024):
-            raise ValueError("width 16-1920, height 16-1080, samples 1-1024")
+        max_width, max_height, max_samples = limits
+        if not (16 <= width <= max_width and 16 <= height <= max_height and 1 <= samples <= max_samples):
+            raise ValueError(f"width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}")
         preset_name(light)  # an unknown name fails before the engine starts
+        if look not in LOOKS:
+            raise ValueError(f"Unknown look {look!r}: one of {', '.join(LOOKS)}.")
         if not (model.colour > 0).any():
             raise ValueError("The model is empty.")
         if self._engine is None:
@@ -616,7 +714,7 @@ class VoxelEditor:
             rgba = self._engine.render_camera(width, height, view["eye"], view["forward"], view["right"], view["up"],
                                               samples)
         out = io.BytesIO()
-        Image.fromarray(rgba[..., :3].copy()).save(out, format="PNG")
+        Image.fromarray(finish(rgba[..., :3].copy(), look)).save(out, format="PNG")
         return out.getvalue()
 
     @staticmethod
@@ -632,9 +730,12 @@ class VoxelEditor:
         target.write_bytes(self.preview_png())
         return str(target)
 
-    def save_render(self, name="render.png", **options):
+    def save_render(self, name="render.png", yaw=-25.0, pitch=10.0, width=640, height=640, samples=64,
+                    light="Golden hour", model: Model | None = None, view: dict | None = None, look="none"):
+        """render_png's picture saved in the outputs folder, up to FILE_LIMITS (print sizes) instead of the
+        size a picture handed back may have."""
         target = self.output_path(name)
-        target.write_bytes(self.render_png(**options))
+        target.write_bytes(self._render(yaw, pitch, width, height, samples, light, model, view, look, FILE_LIMITS))
         return str(target)
 
     def close(self):

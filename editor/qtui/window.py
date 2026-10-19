@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import PySide6QtAds as QtAds
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -16,11 +17,14 @@ from qtui.material_panel import MaterialPanel
 from qtui.palette_panel import TOOL_KEYS, PalettePanel
 from qtui.brush_panel import install_brush_panel
 from qtui.light_panel import install_light_panel
+from qtui.model_panel import install_model_panel
+from qtui.noise_panel import install_noise_panel
 from qtui.render_view import RenderView
 from qtui.scene_docks import install_scenes
 from qtui.slice_view import SliceView
 
-LAYOUT_VERSION = 9
+LAYOUT_VERSION = 11
+NEW_STARTS = ("Filled", "Floor", "Empty")  # how File > New starts a model; Filled first, as MagicaVoxel
 
 
 class EditorWindow(QtWidgets.QMainWindow):
@@ -71,7 +75,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.assistant.status_changed.connect(self.link_label.setText)
         self.assistant.acted.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.doc.hover_changed.connect(self.hover_label.setText)
-        self.doc.changed.connect(self.update_info)
+        self._info_soon = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.update_info)
+        self.doc.changed.connect(lambda: self._info_soon.isActive() or self._info_soon.start())  # once a stroke
         self.doc.reset.connect(self.update_info)
         self._saved = None  # (model, version) when it was opened or saved: edits since then are unsaved
         self.doc.reset.connect(self._mark_saved)
@@ -80,6 +85,10 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._menus()
         self.brush_panel = install_brush_panel(self)  # the 3D edit view's brushes
         self.light_panel = install_light_panel(self)  # the render's sun, sky and tilt blur
+        self.light_panel.picture_requested.connect(self.render_picture_dialog)
+        self.render_view.still_finished.connect(self._picture_done)
+        self.noise_panel = install_noise_panel(self)  # speckle, terrain, erode, scatter on a box
+        self.model_panel = install_model_panel(self)  # the model's box: size, fit, shift, turn, flip
         self.scenes = install_scenes(self)  # models in scenes: Project, Scene and Transform docks
         self.settings = QtCore.QSettings("VoxelPipeline", "QtEditor")
         saved = self.settings.value("layout")
@@ -139,6 +148,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._action(file, "Save", self.save, "Ctrl+S")
         self._action(file, "Save as…", self.save_as, "Ctrl+Shift+S")
         file.addSeparator()
+        self._action(file, "Render picture…", self.render_picture_dialog, "Ctrl+Shift+R")
+        file.addSeparator()
         targets = send_targets()
         for name, path in targets:
             self._action(file, f"Send tables to {name}…", lambda _=False, n=name, p=path: self.send_tables(n, p))
@@ -166,8 +177,15 @@ class EditorWindow(QtWidgets.QMainWindow):
 
     # --- files ------------------------------------------------------------------------
     def new_dialog(self):
-        """A new model of any size up to 256 a side, optionally with a floor of the current colour and
-        material (for a diorama)."""
+        """A new model of any size up to 256 a side, starting Filled (as MagicaVoxel does: carve and paint
+        at any height), with a Floor of some layers (a diorama), or Empty; filled voxels take the current
+        colour and material."""
+        dialog, read = self.new_model_form()
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.new_model(*read())
+
+    def new_model_form(self):
+        """(the New model dialog, a function reading (x, y, z, start, floor layers) from it)."""
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("New model")
         form = QtWidgets.QFormLayout(dialog)
@@ -178,10 +196,20 @@ class EditorWindow(QtWidgets.QMainWindow):
             box.setValue(value)
             boxes[axis] = box
             form.addRow(f"{axis} (voxels)", box)
+        start = QtWidgets.QComboBox()
+        start.addItems(NEW_STARTS)
+        start.setCurrentText("Filled")
+        start.setToolTip("Filled: the whole box, to carve and paint at any height (as MagicaVoxel starts).\n"
+                         "Floor: some layers at the bottom (a diorama). Empty: nothing, attach from the floor.\n"
+                         "Filled voxels take the current colour and material.")
+        form.addRow("start", start)
         ground = QtWidgets.QSpinBox()
-        ground.setRange(0, 256)
+        ground.setRange(1, 256)
+        ground.setValue(4)
         ground.setToolTip("Layers at the bottom filled with the current colour and material")
         form.addRow("floor layers", ground)
+        start.currentTextChanged.connect(lambda text: ground.setEnabled(text == "Floor"))
+        ground.setEnabled(False)
         hint = QtWidgets.QLabel("A small figure is about 32 × 32 × 64.")
         hint.setStyleSheet("color: #888")
         form.addRow(hint)
@@ -190,9 +218,15 @@ class EditorWindow(QtWidgets.QMainWindow):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            z = boxes["z"].value()
-            self.doc.new(boxes["x"].value(), boxes["y"].value(), z, min(ground.value(), z))
+        dialog.boxes, dialog.start, dialog.ground = boxes, start, ground  # for tests
+        return dialog, lambda: (boxes["x"].value(), boxes["y"].value(), boxes["z"].value(),
+                                start.currentText(), ground.value())
+
+    def new_model(self, x: int, y: int, z: int, start: str = "Filled", floor: int = 0):
+        """A new model: start "Filled" (every voxel), "Floor" (`floor` layers) or "Empty"."""
+        if start not in NEW_STARTS:
+            raise ValueError(f"start is one of {', '.join(NEW_STARTS)}")
+        self.doc.new(x, y, z, {"Filled": z, "Floor": min(floor, z), "Empty": 0}[start])
 
     def send_tables(self, name: str, path: Path):
         """Explicit, never automatic: a target (editor.local.json's send_tables) keeps its own copies of
@@ -248,6 +282,111 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Saved {target}", 4000)
         self.update_info()
 
+    # --- pictures -----------------------------------------------------------------------
+    def render_picture_dialog(self):
+        """A high-resolution picture of the Render dock's view (its camera and light) as a PNG: size,
+        samples and finish asked here, drawn in the dock with its progress (Cancel picture in the Light
+        dock stops it)."""
+        if self.render_view.still is not None:
+            QtWidgets.QMessageBox.information(self, "Render picture", "A picture is already rendering.")
+            return
+        dialog, read = self.picture_form()
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        path, width, height, samples, look = read()
+        if not path:
+            return
+        problem = self.render_view.render_still(path, width, height, samples, look)
+        if problem:
+            QtWidgets.QMessageBox.warning(self, "Render picture", problem)
+        else:
+            self.docks["Render"].toggleView(True)
+            self.statusBar().showMessage(f"Rendering a {width} x {height} picture…", 4000)
+
+    def picture_form(self):
+        """(the Render picture dialog, a function reading (path, width, height, samples, look) from it)."""
+        from postprocess import LOOKS
+        from qtui.render_view import STILL_LIMITS
+        max_width, max_height, max_samples = STILL_LIMITS
+        view = self.render_view
+        aspect = max(view.width(), 1) / max(view.height(), 1)  # the dock's shape, kept by default
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Render picture")
+        form = QtWidgets.QFormLayout(dialog)
+        width_box, height_box = QtWidgets.QSpinBox(), QtWidgets.QSpinBox()
+        width_box.setRange(16, max_width)
+        height_box.setRange(16, max_height)
+        width_box.setValue(min(max_width, 3840 if aspect >= 1 else round(2700 * aspect)))
+        keep = QtWidgets.QCheckBox("Keep the Render dock's shape")
+        keep.setChecked(True)
+
+        def kept_height():
+            return max(16, min(max_height, round(width_box.value() / aspect)))
+
+        def fit_height():
+            if keep.isChecked():
+                height_box.setValue(kept_height())
+
+        def height_typed():  # a height of one's own leaves the dock's shape
+            if keep.isChecked() and height_box.value() != kept_height():
+                keep.setChecked(False)
+        width_box.valueChanged.connect(fit_height)
+        keep.toggled.connect(fit_height)
+        height_box.valueChanged.connect(height_typed)
+        fit_height()
+        samples_box = QtWidgets.QSpinBox()
+        samples_box.setRange(1, max_samples)
+        samples_box.setValue(512)
+        samples_box.setToolTip("Samples per pixel: more is smoother and slower (512-1024 for a final picture)")
+        look_box = QtWidgets.QComboBox()
+        look_box.addItems(list(LOOKS))
+        look_box.setToolTip("none: as traced. film: tone curve, soft bloom, vignette. night: strong bloom on "
+                            "glows and reds, cool shadows, grain")
+        model_path = self.doc.model.path
+        stem = Path(model_path).stem if model_path else "picture"
+        path_box = QtWidgets.QLineEdit(str(ROOT / "editor" / "outputs" / f"{stem}.png"))
+        browse = QtWidgets.QPushButton("…")
+
+        def choose_file():
+            chosen, _ = QtWidgets.QFileDialog.getSaveFileName(dialog, "Save picture", path_box.text(),
+                                                              "PNG pictures (*.png)")
+            if chosen:
+                path_box.setText(chosen)
+        browse.clicked.connect(choose_file)
+        file_row = QtWidgets.QHBoxLayout()
+        file_row.addWidget(path_box, 1)
+        file_row.addWidget(browse)
+        form.addRow("Width", width_box)
+        form.addRow("Height", height_box)
+        form.addRow("", keep)
+        form.addRow("Samples", samples_box)
+        form.addRow("Finish", look_box)
+        form.addRow("File", file_row)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
+                                             | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def read():
+            path = path_box.text().strip()
+            if path and not path.lower().endswith(".png"):
+                path += ".png"
+            if path:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+            return path, width_box.value(), height_box.value(), samples_box.value(), look_box.currentText()
+        dialog.widgets = {"width": width_box, "height": height_box, "keep": keep, "samples": samples_box,
+                          "look": look_box, "path": path_box}  # for tests
+        return dialog, read
+
+    def _picture_done(self, path: str, message: str):
+        if path:
+            self.statusBar().showMessage(message, 10000)
+        elif message != "Picture cancelled.":
+            QtWidgets.QMessageBox.warning(self, "Render picture", message)
+        else:
+            self.statusBar().showMessage(message, 4000)
+
     def _mark_saved(self):
         self._saved = (self.doc.model, self.doc.model.version)
 
@@ -286,7 +425,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         model = self.doc.model
         x, y, z = self.doc.size
         name = Path(model.path).name if model.path else "new model"
-        self.info_label.setText(f"{name}   {x} × {y} × {z}   {int((model.colour > 0).sum())} voxels")
+        self.info_label.setText(f"{name}   {x} × {y} × {z}   {np.count_nonzero(model.colour)} voxels")
         self.setWindowTitle(f"{name} – DualVoxel")
 
     def set_assistant_link(self, on: bool):

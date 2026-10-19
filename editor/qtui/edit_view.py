@@ -16,7 +16,13 @@ mirrored across the model's centre if asked. A see-through preview, in the
 colour of the mode the keys held give, shows what a click would change. A drag
 applies the brush along it (attach stays in the first voxel's layer, so it does
 not climb towards the camera; the box brush draws a rectangle); each click or
-drag is one undo step. [ and ] change the size.
+drag is one undo step. [ and ] change the size. The arrow keys shift the whole
+model inside its box as seen (Up: away), Page Up / Page Down up and down, Shift
+for BIG_STEP voxels, wrapping round as the Model dock's Wrap says.
+
+The model is meshed in chunks of CHUNK voxels a side, one actor each (as vengi does): an edit remeshes
+only the chunks its voxels touch, found by comparing the planes with those last shown, so a stroke on a
+256-a-side model stays quick. Colours or materials shown differently remesh every chunk.
 """
 from __future__ import annotations
 
@@ -24,11 +30,12 @@ import numpy as np
 import pyvista as pv
 from PySide6 import QtCore, QtWidgets
 from pyvistaqt import QtInteractor
+from vtkmodules.vtkCommonDataModel import vtkStaticCellLocator
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
-from vtkmodules.vtkRenderingCore import vtkCellPicker
+from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker, vtkPolyDataMapper
 
 from core.scene import IDENTITY
-from qtui.brush import Brush, brush_edit, held_mode, mode_for
+from qtui.brush import DRAGGED, Brush, brush_edit, held_mode, mode_for
 from qtui.document import PROTECT_MODES
 
 HOVER_COLOUR = {"attach": (0.3, 1.0, 0.4), "paint": (1.0, 0.85, 0.1), "erase": (1.0, 0.3, 0.3),
@@ -37,14 +44,57 @@ PROTECTED_RGB = np.array([150, 80, 255], dtype=np.float32)  # protected voxels l
 PROTECTED_TINT = 0.45
 CLICK_SLOP = 4  # pixels a press may move and still count as a click
 PREVIEW_OPACITY = 0.4
+CHUNK = 32  # the model is meshed in blocks this many voxels a side; an edit remeshes the blocks it touches
+EDGE_RGB = (0.08, 0.08, 0.09)
+BIG_STEP = 8  # voxels an arrow key moves with Shift
+Key = QtCore.Qt.Key
+VIEW_MOVES = {Key.Key_Up: (0, 1), Key.Key_Down: (0, -1), Key.Key_Right: (1, 0), Key.Key_Left: (-1, 0)}
 
 
-def voxel_faces(colour_zyx: np.ndarray, rgb: np.ndarray, key_zyx: np.ndarray | None = None):
+def view_axes(camera):
+    """The axes (index, sign) nearest to the view's right and its forward along the floor."""
+    forward = np.subtract(camera.focal_point, camera.position)[:2]
+    if not np.any(forward):
+        forward = np.array(camera.up)[:2]
+    right = np.array([forward[1], -forward[0]])
+    pick = lambda v: (int(np.argmax(np.abs(v))), int(np.sign(v[np.argmax(np.abs(v))])) or 1)
+    return pick(right), pick(forward)
+
+
+def view_delta(camera, key, step: int = 1):
+    """(dx, dy, dz) an arrow key (as seen: Up away) or Page Up / Page Down means, or None for other keys."""
+    delta = [0, 0, 0]
+    if key in VIEW_MOVES:
+        (r_axis, r_sign), (f_axis, f_sign) = view_axes(camera)
+        across, ahead = VIEW_MOVES[key]
+        delta[r_axis] += across * r_sign * step
+        delta[f_axis] += ahead * f_sign * step
+    elif key in (Key.Key_PageUp, Key.Key_PageDown):
+        delta[2] = step if key == Key.Key_PageUp else -step
+    else:
+        return None
+    return delta
+
+
+def voxel_faces(colour_zyx: np.ndarray, rgb: np.ndarray, key_zyx: np.ndarray | None = None,
+                lo=(0, 0, 0), hi=None):
     """The model's exposed faces as quads: points, quads, each face's colour, voxel and outward normal.
-    Faces take rgb[key] (the colour plane by default, e.g. the material plane to show materials)."""
+    Faces take rgb[key] (the colour plane by default, e.g. the material plane to show materials).
+    Only the voxels in the box lo..hi (x, y, z, hi exclusive; the whole model by default), facing the
+    voxels around the box too, so a chunk shows no faces between it and its neighbours."""
     key_zyx = colour_zyx if key_zyx is None else key_zyx
-    solid = colour_zyx.transpose(2, 1, 0) > 0  # (x, y, z)
-    padded = np.pad(solid, 1)
+    size = colour_zyx.shape[::-1]
+    hi = size if hi is None else hi
+    # the box and a layer of voxels around it, empty outside the model
+    near_lo = [max(l - 1, 0) for l in lo]
+    near_hi = [min(h + 1, s) for h, s in zip(hi, size)]
+    near = colour_zyx[near_lo[2]:near_hi[2], near_lo[1]:near_hi[1], near_lo[0]:near_hi[0]].transpose(2, 1, 0) > 0
+    padded = np.zeros([h - l + 2 for l, h in zip(lo, hi)], dtype=bool)
+    at = [n - l + 1 for n, l in zip(near_lo, lo)]
+    padded[at[0]:at[0] + near.shape[0], at[1]:at[1] + near.shape[1], at[2]:at[2] + near.shape[2]] = near
+    solid = padded[1:-1, 1:-1, 1:-1]  # (x, y, z)
+    if not solid.any():
+        return None
     points, quads, colours, voxels, normals = [], [], [], [], []
     count = 0
     for axis in range(3):
@@ -53,8 +103,9 @@ def voxel_faces(colour_zyx: np.ndarray, rgb: np.ndarray, key_zyx: np.ndarray | N
         for sign in (1, -1):
             shift = [0, 0, 0]
             shift[axis] = sign
-            neighbour = np.roll(padded, -sign, axis=axis)[1:-1, 1:-1, 1:-1]
-            idx = np.argwhere(solid & ~neighbour)
+            beside = [slice(1, -1)] * 3
+            beside[axis] = slice(1 + sign, padded.shape[axis] - 1 + sign)
+            idx = np.argwhere(solid & ~padded[tuple(beside)]) + lo
             if not len(idx):
                 continue
             base = idx.copy()
@@ -75,6 +126,24 @@ def voxel_faces(colour_zyx: np.ndarray, rgb: np.ndarray, key_zyx: np.ndarray | N
         return None
     return (np.concatenate(points).astype(np.float32), np.concatenate(quads), np.concatenate(colours),
             np.concatenate(voxels), np.concatenate(normals))
+
+
+def touched_chunks(changed_zyx: np.ndarray, chunk: int = CHUNK) -> set[tuple[int, int, int]]:
+    """The chunks (x, y, z of each) whose faces a change can alter: those holding a changed voxel (a bool
+    plane, z y x) or one next to it. Each chunk looks one voxel past its sides, one axis at a time."""
+    near = changed_zyx
+    for axis in range(3):
+        a = np.moveaxis(near, axis, 0)
+        whole = a.shape[0] // chunk * chunk  # (logical_or.reduceat is far slower than any on a reshape)
+        out = a[:whole].reshape(-1, chunk, *a.shape[1:]).any(axis=1)
+        if whole < a.shape[0]:
+            out = np.concatenate([out, a[whole:].any(axis=0, keepdims=True)])
+        starts = np.arange(0, a.shape[0], chunk)
+        out[1:] |= a[starts[1:] - 1]  # the layer just before each chunk
+        out[:-1] |= a[starts[1:]]  # the layer just after
+        near = np.moveaxis(out, 0, axis)
+    z, y, x = np.nonzero(near)
+    return set(zip(x.tolist(), y.tolist(), z.tolist()))
 
 
 class EditStyle(vtkInteractorStyleTrackballCamera):
@@ -170,7 +239,7 @@ class EditView(QtWidgets.QWidget):
         self.edges_box = QtWidgets.QCheckBox("Edges")
         self.edges_box.setChecked(True)
         self.edges_box.setToolTip("Draw each voxel face's border")
-        self.edges_box.toggled.connect(self.rebuild)
+        self.edges_box.toggled.connect(self._show_edges)
         self.materials_box = QtWidgets.QCheckBox("Materials")
         self.materials_box.setToolTip("Colour the voxels by material (the key is in the Materials dock); "
                                       "the slices follow")
@@ -185,7 +254,8 @@ class EditView(QtWidgets.QWidget):
         hint.setToolTip("Left click or drag: the brush in the current mode · Shift + left and Ctrl + left: the "
                         "other two modes (the Brush dock shows which) · Alt + left: pick colour and material · "
                         "right drag: orbit · middle drag: pan · wheel: zoom · [ and ]: brush size · R: turn the "
-                        "stamp · Esc: stop stamping")
+                        "stamp · Esc: stop stamping · arrows, Page Up / Down: shift the model in its box as seen "
+                        f"(Shift: {BIG_STEP} voxels)")
         hint.setStyleSheet("color: #999")
         hint.setMinimumWidth(0)
         hint.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
@@ -199,8 +269,9 @@ class EditView(QtWidgets.QWidget):
         layout.addLayout(bar)
         layout.addWidget(self.plotter.interactor, 1)
 
-        self.faces = None
-        self.voxel_actor = None
+        self.chunks: dict[tuple[int, int, int], tuple] = {}  # (x, y, z) of a chunk -> (actor, faces, mesh, locator)
+        self._chunk_of = {}  # actor -> its chunk, for picking
+        self._shown = None  # the planes as the chunks show them: (colour, key or None, protected or None)
         self.floor_actor = None
         self.preview_actor = None
         self.stroke_layer = None
@@ -208,18 +279,19 @@ class EditView(QtWidgets.QWidget):
         self.box_start = None  # (start voxel, normal) while a box is dragged
         self.stroke_mode = None  # the mode of the drag in progress
         self.hover_pos = None
-        self._rebuild_timer = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.rebuild)
+        self._rebuild_timer = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.refresh)
         doc.changed.connect(self._rebuild_timer.start)
         doc.display_changed.connect(self.rebuild)
         doc.tables_changed.connect(self.rebuild)  # the material key may have grown
         doc.protection_changed.connect(self._rebuild_timer.start)
         doc.reset.connect(self.on_reset)
+        doc.resized.connect(lambda: self.on_reset(frame=False))  # the camera stays
         doc.current_changed.connect(self._clear_hover)
         self.brush.changed.connect(self._clear_hover)
         self.on_reset()
 
     # --- scene ------------------------------------------------------------------------
-    def on_reset(self):
+    def on_reset(self, frame: bool = True):
         sx, sy, sz = self.doc.size
         self.plotter.remove_actor("floor", render=False)
         self.plotter.remove_actor("bounds", render=False)
@@ -228,34 +300,156 @@ class EditView(QtWidgets.QWidget):
         self.floor_actor = self.plotter.add_mesh(floor, name="floor", color=(0.45, 0.47, 0.52), opacity=0.18,
                                                  show_edges=True, edge_color=(0.55, 0.57, 0.62), lighting=False,
                                                  reset_camera=False)
+        floor_cells = vtkStaticCellLocator()  # a cell for each floor voxel, which the picker would try one by one
+        floor_cells.SetDataSet(self.floor_actor.GetMapper().GetInput())
+        floor_cells.BuildLocator()
+        self.picker.RemoveAllLocators()
+        self.picker.AddLocator(floor_cells)
         self.plotter.add_mesh(pv.Box((0, sx, 0, sy, 0, sz)).outline(), name="bounds", color=(0.5, 0.5, 0.55),
                               line_width=1, pickable=False, reset_camera=False)
+        for actor in list(self._chunk_of):
+            self.plotter.renderer.RemoveActor(actor)
+        self.chunks.clear()
+        self._chunk_of.clear()
+        self._shown = None
         self.rebuild()
-        self.frame()
+        if frame:
+            self.frame()
 
+    # --- the voxels, in chunks ----------------------------------------------------------
     def rebuild(self):
+        """Mesh every chunk again (colours or materials shown differently, another model)."""
+        counts = [-(-n // CHUNK) for n in self.doc.size]
+        every = {(x, y, z) for x in range(counts[0]) for y in range(counts[1]) for z in range(counts[2])}
+        self._remesh(every | set(self.chunks))
+        self._keep_shown()
+        self.plotter.render()
+
+    def refresh(self, points=None):
+        """After an edit: remesh the chunks whose voxels changed since they were shown, or those the
+        voxels at (x, y, z) points touch, when the edit says which it wrote."""
+        if not self._shown_fits():
+            self.rebuild()
+            return
+        chunks = touched_chunks(self._changed()) if points is None else self._chunks_near(points)
+        if chunks:
+            self._remesh(chunks)
+            self._keep_shown(chunks)
+            self.plotter.render()
+
+    def _chunks_near(self, points) -> set[tuple[int, int, int]]:
+        """touched_chunks for voxels at (x, y, z) points, on a grid around them only."""
+        size = np.array(self.doc.size)
+        points = np.asarray(points)
+        points = points[((points >= 0) & (points < size)).all(axis=1)]
+        if not len(points):
+            return set()
+        start = np.maximum(points.min(axis=0) - 1, 0) // CHUNK * CHUNK  # a chunk's corner, and a voxel to spare
+        grid = np.zeros((np.minimum(points.max(axis=0) + 2, size) - start)[::-1], dtype=bool)
+        x, y, z = (points - start).T
+        grid[z, y, x] = True
+        first = start // CHUNK
+        return {(x + first[0], y + first[1], z + first[2]) for x, y, z in touched_chunks(grid)}
+
+    def _planes(self):
+        """(colour, key plane or None when it is the colour plane, key -> sRGB, protected or None)."""
         key, lookup = self.doc.display_planes()
-        self.faces = voxel_faces(self.doc.model.colour, lookup, key)
-        if self.faces is None:
-            self.plotter.remove_actor("voxels", render=False)
-            self.voxel_actor = None
-        else:
-            points, quads, colours, voxels, _ = self.faces
-            protected = self.doc.protected()
+        colour = self.doc.model.colour
+        return colour, None if key is colour else key, lookup, self.doc.protected()
+
+    def _shown_fits(self) -> bool:
+        if self._shown is None:
+            return False
+        colour, key, _, _ = self._planes()
+        return self._shown[0].shape == colour.shape and (key is None) == (self._shown[1] is None)
+
+    def _changed(self) -> np.ndarray:
+        """Voxels (bool plane, z y x) shown otherwise than they are now."""
+        colour, key, _, protected = self._planes()
+        shown_colour, shown_key, shown_protected = self._shown
+        changed = colour != shown_colour
+        if key is not None:
+            changed |= key != shown_key
+        if protected is not None and shown_protected is not None:
+            changed |= protected != shown_protected
+        elif protected is not None or shown_protected is not None:
+            changed |= shown_protected if protected is None else protected
+        return changed
+
+    def _keep_shown(self, chunks=None):
+        """Remember the planes as shown: all of them, or in these chunks."""
+        colour, key, _, protected = self._planes()
+        if chunks is None:
+            self._shown = (colour.copy(), None if key is None else key.copy(),
+                           None if protected is None else protected.copy())
+            return
+        shown_colour, shown_key, shown_protected = self._shown
+        if protected is not None and shown_protected is None:
+            shown_protected = np.zeros_like(protected)
+            self._shown = shown_colour, shown_key, shown_protected
+        for chunk in chunks:
+            x, y, z = (slice(c * CHUNK, (c + 1) * CHUNK) for c in chunk)
+            shown_colour[z, y, x] = colour[z, y, x]
+            if key is not None:
+                shown_key[z, y, x] = key[z, y, x]
+            if shown_protected is not None:
+                shown_protected[z, y, x] = False if protected is None else protected[z, y, x]
+
+    def _remesh(self, chunks):
+        """Mesh these chunks (x, y, z of each) from the planes now: a chunk without faces loses its actor."""
+        colour, key, lookup, protected = self._planes()
+        size = self.doc.size
+        for chunk in chunks:
+            lo = np.multiply(chunk, CHUNK)
+            faces = voxel_faces(colour, lookup, key, lo, np.minimum(lo + CHUNK, size)) \
+                if (lo < size).all() else None
+            old = self.chunks.pop(chunk, None)
+            if old is not None:
+                self.picker.RemoveLocator(old[3])
+            if faces is None:
+                if old is not None:
+                    self.plotter.renderer.RemoveActor(old[0])
+                    del self._chunk_of[old[0]]
+                continue
+            points, quads, colours, voxels, _ = faces
             if protected is not None:  # tinted, so the user sees what the assistant may not change
                 x, y, z = voxels.T
                 hit = protected[z, y, x]
-                colours = colours.copy()
-                colours[hit] = (colours[hit] * (1 - PROTECTED_TINT) + PROTECTED_RGB * PROTECTED_TINT).astype(np.uint8)
+                if hit.any():
+                    colours = colours.copy()
+                    colours[hit] = (colours[hit] * (1 - PROTECTED_TINT) + PROTECTED_RGB * PROTECTED_TINT).astype(
+                        np.uint8)
             mesh = pv.PolyData.from_regular_faces(points, quads)
-            mesh.cell_data["rgb"] = colours
-            self.voxel_actor = self.plotter.add_mesh(
-                mesh, name="voxels", scalars="rgb", rgb=True, show_edges=self.edges_box.isChecked(),
-                edge_color=(0.08, 0.08, 0.09), line_width=1, reset_camera=False)
+            mesh.cell_data.set_scalars(colours, "rgb")
+            actor = old[0] if old is not None else self._chunk_actor(chunk)
+            actor.GetMapper().SetInputData(mesh)
+            cells = vtkStaticCellLocator()  # the picker finds the face under the mouse without trying them all
+            cells.SetDataSet(mesh)
+            cells.BuildLocator()
+            self.picker.AddLocator(cells)
+            self.chunks[chunk] = (actor, faces, mesh, cells)
         self.picker.InitializePickList()
-        for actor in (self.voxel_actor, self.floor_actor):
+        for actor in (*self._chunk_of, self.floor_actor):
             if actor is not None:
                 self.picker.AddPickList(actor)
+
+    def _chunk_actor(self, chunk):
+        mapper = vtkPolyDataMapper()
+        mapper.SetScalarModeToUseCellData()
+        mapper.SetColorModeToDirectScalars()
+        actor = vtkActor()
+        actor.SetMapper(mapper)
+        prop = actor.GetProperty()
+        prop.SetEdgeColor(*EDGE_RGB)
+        prop.SetLineWidth(1)
+        prop.SetEdgeVisibility(self.edges_box.isChecked())
+        self.plotter.renderer.AddActor(actor)
+        self._chunk_of[actor] = chunk
+        return actor
+
+    def _show_edges(self, on: bool):
+        for actor in self._chunk_of:
+            actor.GetProperty().SetEdgeVisibility(on)
         self.plotter.render()
 
     def frame(self):
@@ -269,10 +463,11 @@ class EditView(QtWidgets.QWidget):
         if not self.picker.Pick(pos[0], pos[1], 0, self.plotter.renderer):
             return None, None
         actor = self.picker.GetActor()
-        if actor is self.voxel_actor and self.faces is not None:
+        chunk = self._chunk_of.get(actor)
+        if chunk is not None:
+            _, _, _, voxels, normals = self.chunks[chunk][1]
             cell = self.picker.GetCellId()
-            voxel = self.faces[3][cell]
-            return tuple(int(v) for v in voxel), tuple(int(v) for v in voxel + self.faces[4][cell])
+            return tuple(int(v) for v in voxels[cell]), tuple(int(v) for v in voxels[cell] + normals[cell])
         if actor is self.floor_actor:
             x, y, _ = self.picker.GetPickPosition()
             target = (int(np.floor(x)), int(np.floor(y)), 0)
@@ -309,7 +504,8 @@ class EditView(QtWidgets.QWidget):
         if voxels is None:
             return 0
         changed = self.doc.apply_brush(voxels, self.mode())
-        self.rebuild()  # at once, so the next pick sees the new voxels
+        if changed:  # at once, so the next pick sees the new voxels; only the chunks the brush touched
+            self.refresh(voxels[0])
         return changed
 
     def set_stamp(self, name, model, orient=IDENTITY):
@@ -327,7 +523,7 @@ class EditView(QtWidgets.QWidget):
         self.doc.begin_stroke()
         self.stroke_layer = None
         self.last_stroke = None
-        if self.brush.kind == "box":
+        if self.brush.kind in DRAGGED:
             hit, attach = self._pick(pos)
             target = attach if self.stroke_mode == "attach" else hit
             self.box_start = (target, self._normal(hit, attach)) if target is not None else None
@@ -341,7 +537,7 @@ class EditView(QtWidgets.QWidget):
             return
         hit, attach = self._pick(pos)
         target = attach if self.stroke_mode == "attach" else hit
-        if self.brush.kind == "box":
+        if self.brush.kind in DRAGGED:
             if self.box_start is not None and target is not None:
                 self.last_stroke = target
                 self._show_preview(hit, attach, target)
@@ -365,7 +561,7 @@ class EditView(QtWidgets.QWidget):
         if self.stroke_mode in (None, "pick"):
             self.stroke_mode = None
             return
-        if self.brush.kind == "box" and self.box_start is not None:
+        if self.brush.kind in DRAGGED and self.box_start is not None:
             start = self.box_start[0]
             self.apply(start, start, box_end=self.last_stroke)  # the box brush reads its start and normal
             self.box_start = None
@@ -419,6 +615,23 @@ class EditView(QtWidgets.QWidget):
         self.doc.hover_changed.emit(f"3D {mode} ({what}): {self.doc.describe(*target)} · "
                                     f"{len(points)} voxels")
 
+    # --- the Noise dock's box ----------------------------------------------------------------
+    def set_region(self, region):
+        """Outline the Noise dock's box (noise_panel.NoiseBox) while it shows."""
+        self.region = region
+        region.changed.connect(self.draw_region)
+        self.draw_region()
+
+    def draw_region(self):
+        if not self.region.shown:
+            self.plotter.remove_actor("noise box", render=True)
+            return
+        lo, hi = np.array(self.region.bounds())
+        lo, hi = lo - 0.03, hi + 1.03  # just outside the voxels' own edges, so they do not hide it
+        self.plotter.add_mesh(pv.Box((lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])).outline(), name="noise box",
+                              color=np.divide(self.region.COLOUR, 255), line_width=2, pickable=False,
+                              reset_camera=False, render=True)
+
     # --- keys -------------------------------------------------------------------------------
     def eventFilter(self, obj, event):
         if event.type() == QtCore.QEvent.Type.MouseButtonRelease:
@@ -443,6 +656,10 @@ class EditView(QtWidgets.QWidget):
                 return True
             if self.brush.kind == "stamp" and key == QtCore.Qt.Key.Key_Escape:
                 self.brush.set(kind="voxel")
+                return True
+            delta = view_delta(self.plotter.camera, key, BIG_STEP if shift else 1)
+            if delta is not None and self.stroke_mode is None:
+                self.doc.shift(delta, self.doc.shift_wrap)
                 return True
         return super().eventFilter(obj, event)
 

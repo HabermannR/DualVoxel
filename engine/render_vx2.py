@@ -30,8 +30,9 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=64)
     args = parser.parse_args()
 
-    colour, material = vx2.read(args.vx2)
-    colors, materials = load_tables()
+    own = vx2.find_colours(vx2.read_fingerprints(args.vx2)[0], [args.vx2.parent])  # a project's colours
+    colors, materials = vx2.load_colours(own) if own else load_tables()[0], load_tables()[1]
+    colour, material, _ = vx2.read_model(args.vx2, colors=colors)
     start = time.perf_counter()
     renderer = VoxelRenderer()
     pairs = renderer.show(colour, material, materials, colors)

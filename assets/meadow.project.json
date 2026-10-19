@@ -1,6 +1,7 @@
 {
   "format": "voxelpipeline-project",
   "version": 1,
+  "colours": "meadow.colors.json",
   "models": {
     "sprigs": "meadow_parts/sprigs.vx2",
     "grass_tuft": "grass_tuft.vx2",

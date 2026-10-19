@@ -3,8 +3,9 @@ Document's tool).
 
 Kinds, as in MagicaVoxel: voxel (a size and a shape: square or circle, flat
 across the clicked face or a volume, cube or sphere), face (the clicked face's
-connected flat area), box (drag a rectangle in one layer) and stamp (a
-project's model, from the outliner's "Use as brush"); and the sculpting ones,
+connected flat area), box (drag a rectangle in one layer), ellipsoid (drag a
+rectangle: the ellipsoid over it, `height` layers tall, 0 the rectangle's
+shorter side) and stamp (a project's model, from the outliner's "Use as brush"); and the sculpting ones,
 which reshape what is there within the voxel brush's size and shape: smooth,
 erode (peel the outer layer) and grow (add one; Shift swaps erode and grow).
 Mirror x / y / z repeats every edit across the model's centre. brush_edit()
@@ -22,16 +23,17 @@ from types import SimpleNamespace
 import numpy as np
 from PySide6 import QtCore
 
-from core.brushes import MAX_SIZE, SCULPT_OPS, box, face_region, layer_region, mirrored, placed, sculpt
+from core.brushes import MAX_SIZE, SCULPT_OPS, box, ellipsoid, face_region, layer_region, mirrored, placed, sculpt
 from core.scene import place_plane, rotated
 
 SCULPT = SCULPT_OPS  # smooth, erode, grow
-KINDS = ("voxel", "face", "box", "stamp", *SCULPT)
+KINDS = ("voxel", "face", "box", "ellipsoid", "stamp", *SCULPT)
+DRAGGED = ("box", "ellipsoid")  # kinds drawn by dragging a rectangle, written on release
 SWAPPED_SCULPT = {"erode": "grow", "grow": "erode"}  # with Shift, as attach and erase
 SHIFT_MODE = {"attach": "erase", "erase": "attach", "paint": "erase",  # MagicaVoxel's attach / erase tandem
               "protect": "unprotect"}
 CTRL_MODE = {"attach": "paint", "erase": "paint", "paint": "attach", "protect": "protect"}
-PROTECT_KINDS = ("voxel", "face", "box")  # the Protect mode marks what these cover; the other kinds act as voxel
+PROTECT_KINDS = ("voxel", "face", "box", "ellipsoid")  # the Protect mode marks what these cover; the other kinds act as voxel
 
 
 def mode_for(tool: str, shift: bool = False, ctrl: bool = False, alt: bool = False) -> str:
@@ -62,6 +64,7 @@ class Brush(QtCore.QObject):
         self.size = 1
         self.round = False   # circle / sphere instead of square / cube
         self.volume = True   # 3D (cube, sphere) instead of 2D (square, circle)
+        self.height = 0      # the ellipsoid's height in layers; 0: its rectangle's shorter side
         self.mirror = (False, False, False)
         self.stamp = None    # (name, Model, orientation) for the stamp kind
 
@@ -76,6 +79,8 @@ class Brush(QtCore.QObject):
         for name, value in fields.items():
             if name == "size":
                 value = max(1, min(MAX_SIZE, int(value)))
+            if name == "height":
+                value = max(0, min(MAX_SIZE, int(value)))
             if name == "mirror":
                 value = tuple(bool(v) for v in value)
             if name == "kind" and value not in KINDS:
@@ -143,6 +148,8 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
         _, model, orient = brush.stamp
         colour, material = place_plane(model.colour, orient).copy(), place_plane(model.material, orient).copy()
         material = doc.adopt_materials(model, material)  # the stamp's own materials come along
+        if model.table is not doc.model.table and model.table.fingerprint != doc.model.table.fingerprint:
+            colour = model.table.mapping_to(doc.model.table)[colour]  # other colours: the nearest of these
         z, y, x = np.nonzero(colour)
         # attach rests the brush on the face; paint and erase sink it into the surface from the face
         low = stamp_low(target, normal if tool == "attach" else -normal, colour.shape[::-1])
@@ -160,6 +167,10 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
     elif brush.kind == "box":
         start, start_normal = box_start if box_start is not None else (target, normal)
         points = box(start, box_end if box_end is not None else target, start_normal)
+    elif brush.kind == "ellipsoid":
+        start, start_normal = box_start if box_start is not None else (target, normal)
+        points = ellipsoid(start, box_end if box_end is not None else target, start_normal, brush.height,
+                           outward=tool == "attach", centred=in_slice)
     else:
         shape = brush.shape
         points = placed(shape, brush.size, target, normal, against=tool == "attach" and not in_slice)

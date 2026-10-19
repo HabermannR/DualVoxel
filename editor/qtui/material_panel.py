@@ -28,7 +28,8 @@ class MaterialList(QtWidgets.QWidget):
         self._tops = []
         doc.current_changed.connect(self.update)
         doc.material_edited.connect(self.update)
-        doc.changed.connect(self.recount)
+        self._recount_soon = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.recount)
+        doc.changed.connect(lambda: self._recount_soon.isActive() or self._recount_soon.start())  # once a stroke
         doc.reset.connect(self.recount)
         doc.tables_changed.connect(self.build_rows)
         self.build_rows()

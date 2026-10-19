@@ -1,6 +1,7 @@
 {
   "format": "voxelpipeline-project",
   "version": 1,
+  "colours": "demo.colors.json",
   "models": {
     "alchemist": "alchemist.vx2",
     "skeleton": "skeleton.vx2",

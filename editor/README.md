@@ -2,8 +2,9 @@
 
 The editor, seen live in a path tracer.
 
-Every voxel has a **colour** (a slot 1-255 in `..\palette\colors.json`, 0 =
-empty) and a **material** (an id in `..\palette\materials.json`). Models are
+Every voxel has a **colour** (a slot 1-255, 0 = empty, in its project's colour
+table `<project>.colors.json`, or the default `..\palette\colors.json`) and a
+**material** (an id in `..\palette\materials.json`). Models are
 `.vx2` files (`..\pipeline\vx2.py`); `.vox` opens as an import (colours snap to
 the table, MagicaVoxel material types become ours) and is written as an export
 (with materials, or colours only).
@@ -45,9 +46,10 @@ a 3D edit view in VTK, the renderer, the colours and the materials.
 The VTK view shows flat colours for editing only; looks are judged in the
 render dock.
 
-- **Your own models and dioramas:** File → New… makes an empty model of any
-  size up to 256 voxels a side, optionally with floor layers of the current
-  colour and material. Save writes
+- **Your own models and dioramas:** File → New… makes a model of any size up
+  to 256 voxels a side that starts Filled (the default, as MagicaVoxel: carve
+  and paint at any height), with a Floor of some layers (a diorama), or Empty,
+  in the current colour and material. Save writes
   `..\assets\<name>.vx2` (and `..\export\<name>.vox`); Open reads it back;
   the render dock shows it under the golden-hour light. The render dock uses
   the renderer (`VoxelRenderer.dll`, found in `renderer_path` of the gitignored `editor.local.json`, else in
@@ -87,6 +89,44 @@ render dock.
   brushes and mirroring; Stamp is a 3D-view brush. The layer moves with the slider, the ▼/▲ buttons (held, they keep
   stepping), the number box or the wheel; "Behind" shows the nearest voxels
   behind it, dimmed.
+- **Noise** (a tab beside Brush): the API's noise tools on a box of the model,
+  each run one undo step. **Speckle** recolours from weighted colours,
+  scattered or in patches; **Terrain** fills ground up to a smooth noise height
+  (top, under and soil colours); **Erode** adds pits and bumps; **Scatter**
+  puts small columns (a tip, a stem under it) on the top surface. The box is
+  two corners, the whole model to start with; **Picked** sets a corner to the
+  voxel last picked (Alt + left). While the dock is in sight the 3D view and
+  the slices outline the box (dashed in a slice whose layer is outside it);
+  with **Drag box** on, a left drag in a slice sets the box's two axes there
+  and leaves the third. **Add current** adds the current colour and
+  material to a list with a weight. The same seed gives the same voxels;
+  **Reroll** undoes the last run and runs again with a new seed.
+- **Model** (a tab beside Brush): the model's box, as MagicaVoxel's edit mode.
+  **Size** and **Apply** resize it (1-256 a side), the voxels placed by an
+  anchor per axis (low, centre or high; x and y centred and on the floor to
+  start with); **Fit** shrinks it to the voxels. **Shift** moves every voxel
+  inside the box, wrapping round (**Wrap**) or dropping what goes out; the
+  arrow keys in the 3D edit view do the same as seen, Page Up / Page Down up
+  and down, Shift 8 voxels. **Turn and flip** turn or mirror the whole model,
+  the box with it. Each is one undo step; protection moves with the voxels,
+  and a project's part resized keeps its instances' voxels where they were.
+- **Colours** (per project): a voxel stores a slot, and a colour table says
+  what each slot looks like; the renderer gets the table with every model.
+  Each project keeps its own, `<project>.colors.json` beside its
+  `.project.json` (one line per slot), starting as a copy of the default
+  `..\palette\colors.json`, which the editor never changes. The dock says at
+  its top whose colours are shown: the open project's (changeable once the
+  project is saved), the default, or another project's (read-only, for a
+  model opened on its own). A hex value or **Change colour…** (live) changes
+  the current slot in every part, the scene and the render; the line below
+  counts the voxels using it and warns when another slot is almost the same
+  (ΔE under 3); a corner mark shows changed slots (yellow: not saved);
+  Revert / Revert all; **Order** lays the grid out by Table, Hue, Lightness,
+  Chroma or Similar (alike colours side by side) without changing any slot
+  number. Save project writes the colours file and restamps every
+  part (Ctrl+S with unsaved colours runs it). A model brought in with other
+  colours (Add model, a stamp) moves to the nearest colours; as a part it
+  becomes a copy, `<file>-<project>.vx2`, and its file stays as it was.
 - **Materials:** grouped, with roughness, metal, glow, transmission and
   scattering as bars, whether the renderer draws them (yes, partly, new), the
   voxels using each and the note as tooltip. A click makes one current; the
@@ -147,6 +187,12 @@ render dock.
   to the golden hour at its own strength, Lights off shows what glows on its
   own; Tilt blur switches the tilt-shift band; Pause render (F9)
   stops the render. Only the picture changes, never the model.
+- **Render picture…** (File menu, Ctrl+Shift+R, or the Light dock's
+  button): a picture of the Render dock's view up to 8192 a side, with a
+  finish (none, film, night: `postprocess.py`), saved as a PNG. It draws in
+  steps in the Render dock (`RenderView.render_still`), showing its samples,
+  and can be cancelled; the MCP's `render_file` and the API's `save_render`
+  make the same pictures without the window.
 - **Scenes** (models placed together, as MagicaVoxel's world or Blender's
   objects): a project, `..\assets\<name>.project.json` (Scene → New / Open /
   Save project, Ctrl+Alt+S; the command line opens one too), lists
@@ -241,6 +287,7 @@ writes the parts into `assets` as `<file>-<n>.vx2`.
 ## Structure
 
 `core\model.py` the two-byte model, its own materials, edits and undo;
+`core\colours.py` colour tables (the default, a project's own, remapping);
 `core\scene.py` projects; `core\brushes.py` brush shapes; `core\camera.py`
 the render dock's orbit camera; `qtui\` the window; `logic\tools.py` the
 shape and fill helpers the headless API uses; `engine_view.py` the live engine

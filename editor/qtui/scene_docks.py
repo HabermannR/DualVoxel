@@ -7,15 +7,21 @@ calls instead of editing them:
 - `doc.new` / `doc.open`: while the model docks show a project's model, a fresh
   Model takes its place first, so New and Open never overwrite a model that
   scenes use (a project's model is edited in place, through `doc.edit_model`).
+  Either starts on the project's colours: a new model keeps them, an opened one
+  keeps them if its file has the same colours, else takes its file's own.
 - `window.open_path`: a `.project.json` (from the command line) opens as a project.
 - `window._save_to`: saving the model being edited (Ctrl+S) marks it saved in
-  the project.
+  the project; with the project's colours changed, Save project goes first (the
+  colours file, and every part on them).
 - `window.unsaved` / `window.save_unsaved` (the ask on closing): the project's
   edited parts and changed scenes too, saved by Save project; a part in the
   model docks counts as the project's, not as a model of its own.
 - `window.closeEvent`: a close that goes ahead closes the scene view too.
 - Edit → Undo / Redo: the scene's last change while the Project dock, the scene view
   or the transform panel has focus, the model's otherwise.
+
+A part resized in the model docks (the Model dock, or its undo) moves its
+instances so their voxels stay where they were (`doc.transformed`).
 
 The outliner's "Use as brush" hands a model to the 3D edit view as a stamp brush.
 """
@@ -50,6 +56,11 @@ class SceneDocks(QtCore.QObject):
         self.window = window
         self.doc = window.doc
         self.project_doc = ProjectDocument(self.doc)
+        self.doc.project = lambda: self.project_doc.project  # its colours are the ones the Colours dock changes
+        if self.doc.model.path is None and not (self.doc.model.colour > 0).any():
+            self.doc.model.table = self.project_doc.project.table  # the empty model at the start
+            self.doc.colour_table_changed.emit()
+        self.project_doc.noted.connect(self.show_notes)
         self.scene_view = SceneView(self.doc, self.project_doc)
         self.outliner = Outliner(self.doc, self.project_doc)
         self.transform = TransformPanel(self.project_doc)
@@ -63,6 +74,7 @@ class SceneDocks(QtCore.QObject):
         self.project_doc.selected.connect(self._show_scene)
         self.project_doc.edit_model.connect(self.edit_model)
         self.outliner.brush_requested.connect(self.use_as_brush)
+        self.doc.transformed.connect(self.follow_transform)
         self._scene_model, self._scene_key, self.render_scene = None, None, False
         window.render_view.source = self.scene_model
         window.docks["Scene"].visibilityChanged.connect(lambda shown: shown and self._render_scene(True))
@@ -108,13 +120,15 @@ class SceneDocks(QtCore.QObject):
             original = getattr(doc, name)
 
             def wrapped(*args, _original=original, **kwargs):
-                shown = doc.model
+                shown, table = doc.model, doc.model.table
                 if self.project_doc.project.name_of(shown) is not None:
                     doc.model = share_tables(Model(), shown)  # leave the project's model as it is
+                doc.model.table = self.project_doc.project.table  # open: kept if the file has the same colours
                 try:
                     result = _original(*args, **kwargs)
                 except Exception:
                     doc.model = shown
+                    shown.table = table
                     raise
                 self._render_scene(False)
                 return result
@@ -149,6 +163,11 @@ class SceneDocks(QtCore.QObject):
         save_to = w._save_to
 
         def save_and_mark(path):
+            project = self.project_doc.project
+            if doc.model.table is project.table and project.colours_modified():
+                self._save_project(None)  # the colours file first, so the model's fingerprint names saved colours
+                if project.colours_modified():
+                    return  # the project's save failed (and said why)
             save_to(path)
             model = self.project_doc.project.name_of(doc.model)
             if model is not None:  # the project now reads the model from this file
@@ -210,12 +229,14 @@ class SceneDocks(QtCore.QObject):
         """The project's line for the ask on closing, if its parts or scenes have unsaved changes."""
         project = self.project_doc.project
         edited = project.modified_models()
-        if not edited and not self.project_doc.modified():
+        if not edited and not self.project_doc.modified() and not project.colours_modified():
             return []
         name = f"Project {project.path.name}" if project.path else "Project (new, never saved)"
         what = [f"edited parts: {', '.join(edited)}"] if edited else []
         if self.project_doc.modified():
             what.append("scenes or parts changed")
+        if project.colours_modified():
+            what.append(f"colours changed: {', '.join(map(str, project.table.changed_slots()))}")
         return [f"{name}: {'; '.join(what)}"]
 
     def _save_project(self, name):
@@ -226,6 +247,15 @@ class SceneDocks(QtCore.QObject):
             return
         self.window.statusBar().showMessage(f"Saved {target}", 4000)
 
+    def show_notes(self, text: str):
+        """What a project's open or Add model did to a part (colours remapped), without stopping the work."""
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Information, "Colours", text,
+                                    QtWidgets.QMessageBox.StandardButton.Ok, self.window)
+        box.setModal(False)
+        box.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.show()
+        self.window.statusBar().showMessage(text.split("\n")[0], 8000)
+
     def edit_model(self, name: str):
         """The project's own Model goes to the model docks: every edit shows on each of its instances."""
         self.doc.edit_model(self.project_doc.project.models[name])
@@ -234,6 +264,14 @@ class SceneDocks(QtCore.QObject):
         self.window.docks["Colours"].setAsCurrentTab()
         count = len(self.project_doc.project.instances_of(name))
         self.window.statusBar().showMessage(f"Editing model {name} ({count} instances follow)", 4000)
+
+    def follow_transform(self, model, entry):
+        """A part's box was resized (or fitted, or that undone): its instances move so its voxels stay where
+        they were in the scenes. A shift, turn or flip moves the voxels in the box; the box stays put."""
+        _, op, old_size, new_size = entry
+        name = self.project_doc.project.name_of(model)
+        if name is not None and op[0] == "resize":
+            self.project_doc.follow_resize(name, old_size, new_size, op[2])
 
     def use_as_brush(self, name: str, orient):
         """Stamp this project model in the 3D edit view (into the model being edited)."""
@@ -276,7 +314,7 @@ class SceneDocks(QtCore.QObject):
         if key != self._scene_key:
             colour, material, _, local = project.merged(scene)
             model = self._scene_model or Model()
-            share_tables(model, self.doc.model)
+            model.table, model.materials = project.table, self.doc.model.materials
             model._replace(np.ascontiguousarray(colour), np.ascontiguousarray(material))
             model.local = {m["id"]: m for m in local}
             self._scene_model, self._scene_key = model, key

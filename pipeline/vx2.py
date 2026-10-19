@@ -8,7 +8,7 @@ File layout, little-endian:
     4 bytes   magic b"VX2\0"
     uint32    version (1, or 2 with the model's own materials)
     uint32 x3 size x, y, z
-    8 bytes   colour table fingerprint (palette/colors.json)
+    8 bytes   colour table fingerprint (palette/colors.json, or a project's <name>.colors.json)
     8 bytes   material table fingerprint (palette/materials.json)
     x*y*z     colour plane: slot 1-255, 0 = empty
     x*y*z     material plane: id in materials.json, or 128-255 for one of the model's
@@ -25,6 +25,13 @@ voxel arrays do. The fingerprints say which tables a file was made with; a
 mismatch means its numbers point into a different table. After a table change
 that keeps every number's meaning (new materials at the end, a tuned strength),
 "restamp" writes the current fingerprints into existing files.
+
+Colours: the default table is palette/colors.json (palette/build_colors.py builds
+it); a project keeps its own, <project>.colors.json beside its .project.json,
+which starts as a copy of the default and is changed in the editor's Colours
+dock. A file's colour fingerprint names the table its slots mean: find_colours()
+looks for it among palette/colors.json and the *.colors.json files of the
+folders given, and restamp keeps a file on the project table it was made with.
 
 .vox export: lossless keeps every (colour, material) pair as one palette entry
 whose RGBA is the table colour and whose MATL chunk carries _spell_color and
@@ -45,27 +52,72 @@ MAGIC, VERSION = b"VX2\0", 1
 LOCAL_VERSION, LOCAL_MAGIC, LOCAL_FIRST = 2, b"MATS", 128  # the model's own materials: ids 128-255
 HEADER = struct.Struct("<4sI3I8s8s")
 CHUNK = struct.Struct("<4sI")
+DEFAULT_COLOURS = ROOT / "palette" / "colors.json"
+COLOURS_SUFFIX = ".colors.json"  # a project's own colour table: <project>.colors.json
+
+
+def load_colours(path: Path) -> list[dict]:
+    """A colour table's slots: palette/colors.json, or a project's <name>.colors.json, whose lines
+    carry only id, hex, band and name (rgb is filled in from hex)."""
+    colors = json.loads(Path(path).read_text(encoding="utf-8"))["colors"]
+    for c in colors:
+        c.setdefault("rgb", [int(c["hex"][i:i + 2], 16) for i in (1, 3, 5)])
+    if [c["id"] for c in colors] != list(range(1, len(colors) + 1)) or len(colors) > 255:
+        raise ValueError(f"{Path(path).name}: the slots must be numbered from 1, at most 255")
+    return colors
 
 
 def load_tables():
-    colors = json.loads((ROOT / "palette" / "colors.json").read_text(encoding="utf-8"))["colors"]
+    """(the default colour table, the shared material table)."""
     materials = json.loads((ROOT / "palette" / "materials.json").read_text(encoding="utf-8"))["materials"]
-    return colors, materials
+    return load_colours(DEFAULT_COLOURS), materials
+
+
+def colour_fingerprint(colors: list[dict]) -> bytes:
+    """What the colour slots mean: slot -> rgb."""
+    key = json.dumps([[c["id"], list(c["rgb"])] for c in colors], separators=(",", ":"))
+    return hashlib.sha256(key.encode()).digest()[:8]
 
 
 def fingerprints(colors: list[dict], materials: list[dict]) -> tuple[bytes, bytes]:
     """Content hashes of what the numbers mean: slot -> rgb, and each material's parameters."""
-    colour_key = json.dumps([[c["id"], c["rgb"]] for c in colors], separators=(",", ":"))
     material_key = json.dumps(materials, sort_keys=True, separators=(",", ":"))
-    return (hashlib.sha256(colour_key.encode()).digest()[:8], hashlib.sha256(material_key.encode()).digest()[:8])
+    return colour_fingerprint(colors), hashlib.sha256(material_key.encode()).digest()[:8]
 
 
-def write(path: Path, colour: np.ndarray, material: np.ndarray, local: list[dict] | None = None) -> None:
+def read_fingerprints(path: Path) -> tuple[bytes, bytes]:
+    """(colour, material) fingerprints from a .vx2 file's header."""
+    with open(path, "rb") as f:
+        magic, _, _, _, _, colour_fp, material_fp = HEADER.unpack(f.read(HEADER.size))
+    if magic != MAGIC:
+        raise ValueError(f"{path} is not a .vx2 file")
+    return colour_fp, material_fp
+
+
+def find_colours(fingerprint: bytes, folders=()) -> Path | None:
+    """The colour table with this fingerprint: palette/colors.json, or a *.colors.json in the folders."""
+    seen = set()
+    for path in [DEFAULT_COLOURS, *(p for f in folders for p in sorted(Path(f).glob(f"*{COLOURS_SUFFIX}")))]:
+        if path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        try:
+            if colour_fingerprint(load_colours(path)) == fingerprint:
+                return path
+        except (OSError, ValueError, KeyError):
+            continue
+    return None
+
+
+def write(path: Path, colour: np.ndarray, material: np.ndarray, local: list[dict] | None = None,
+          colors: list[dict] | None = None) -> None:
     """colour and material: uint8 arrays shaped (z, y, x); local: the model's own materials
-    (ids 128-255), saved with it (version 2); without them the file stays version 1."""
+    (ids 128-255), saved with it (version 2); without them the file stays version 1. colors: the
+    colour table its slots mean (a project's), by default palette/colors.json."""
     if colour.shape != material.shape or colour.ndim != 3:
         raise ValueError("colour and material planes must be the same (z, y, x) shape")
-    colors, materials = load_tables()
+    default_colors, materials = load_tables()
+    colors = default_colors if colors is None else colors
     local = sorted(local or [], key=lambda m: m["id"])
     local_ids = [m["id"] for m in local]
     if any(not LOCAL_FIRST <= i <= 255 for i in local_ids) or len(set(local_ids)) != len(local_ids):
@@ -85,8 +137,10 @@ def write(path: Path, colour: np.ndarray, material: np.ndarray, local: list[dict
                      + body + tail)
 
 
-def read_model(path: Path, check_tables: bool = True) -> tuple[np.ndarray, np.ndarray, list[dict]]:
-    """(colour plane, material plane, the model's own materials) of a version 1 or 2 file."""
+def read_model(path: Path, check_tables: bool = True,
+               colors: list[dict] | None = None) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+    """(colour plane, material plane, the model's own materials) of a version 1 or 2 file; check_tables:
+    made with the colour table `colors` (by default palette/colors.json) and the material table."""
     data = path.read_bytes()
     magic, version, sx, sy, sz, colour_fp, material_fp = HEADER.unpack_from(data)
     if magic != MAGIC or version not in (VERSION, LOCAL_VERSION):
@@ -101,8 +155,10 @@ def read_model(path: Path, check_tables: bool = True) -> tuple[np.ndarray, np.nd
         local = json.loads(data[end + CHUNK.size:].decode("utf-8"))["materials"]
     elif len(data) != end:
         raise ValueError(f"{path}: expected {end} bytes, found {len(data)}")
-    if check_tables and (colour_fp, material_fp) != fingerprints(*load_tables()):
-        raise ValueError(f"{path} was made with different colour or material tables")
+    if check_tables:
+        default_colors, materials = load_tables()
+        if (colour_fp, material_fp) != fingerprints(default_colors if colors is None else colors, materials):
+            raise ValueError(f"{path} was made with different colour or material tables")
     planes = np.frombuffer(data, dtype=np.uint8, offset=HEADER.size, count=2 * n).reshape(2, sz, sy, sx)
     return planes[0].copy(), planes[1].copy(), local
 
@@ -114,10 +170,12 @@ def read(path: Path, check_tables: bool = True) -> tuple[np.ndarray, np.ndarray]
 
 
 def to_vox(colour: np.ndarray, material: np.ndarray, out: Path, lossy: bool = False,
-           local: list[dict] | None = None) -> int:
-    """Write a .vox; returns the number of palette entries used. local: the model's own materials."""
+           local: list[dict] | None = None, colors: list[dict] | None = None) -> int:
+    """Write a .vox; returns the number of palette entries used. local: the model's own materials;
+    colors: the colour table (a project's), by default palette/colors.json."""
     from to_two_bytes import magica_keys, write_vox  # one .vox writer for the pipeline
-    colors, shared = load_tables()
+    default_colors, shared = load_tables()
+    colors = default_colors if colors is None else colors
     materials = {m["id"]: m for m in [*shared, *(local or [])]}
     by_id = {c["id"]: c for c in colors}
     z, y, x = np.nonzero(colour)
@@ -149,10 +207,13 @@ def main() -> None:
     if args.command == "restamp":
         for path in args.files:
             colour, material, local = read_model(path, check_tables=False)
-            write(path, colour, material, local)  # write() checks every number fits the tables
-            print(f"{path}: restamped")
+            own = find_colours(read_fingerprints(path)[0], [path.parent])  # a project's table stays its own
+            write(path, colour, material, local, load_colours(own) if own else None)  # checks every number fits
+            print(f"{path}: restamped" + (f" (colours: {own.name})" if own and own != DEFAULT_COLOURS else ""))
         return
-    colour, material, local = read_model(args.vx2)
+    own = find_colours(read_fingerprints(args.vx2)[0], [args.vx2.parent])
+    colors = load_colours(own) if own else None
+    colour, material, local = read_model(args.vx2, colors=colors)
     if args.command == "info":
         materials = {m["id"]: m for m in [*load_tables()[1], *local]}
         solid = colour > 0
@@ -160,7 +221,7 @@ def main() -> None:
         print(f"{args.vx2}: {colour.shape[::-1]} (x, y, z), {int(solid.sum())} voxels, "
               f"{len(np.unique(colour[solid]))} colours, materials {used}")
     else:
-        entries = to_vox(colour, material, args.out, args.lossy, local)
+        entries = to_vox(colour, material, args.out, args.lossy, local, colors)
         print(f"{args.out}: {entries} palette entries ({'lossy' if args.lossy else 'lossless'})")
 
 

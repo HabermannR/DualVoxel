@@ -5,11 +5,15 @@ fills empty cells, paint recolours, erase removes), Shift + left and Ctrl + left
 use the other two modes, Alt + left picks. It draws with the Brush dock's brush
 (qtui.brush.brush_edit): its size and shape at each cell the mouse crosses (flat
 ones lie in the layer, volumes reach the layers around it), box a rectangle in
-the layer (drag it), face the connected area of the clicked cell's colour in the
+the layer (drag it), ellipsoid the ellipsoid over a dragged rectangle, centred
+on the layer, face the connected area of the clicked cell's colour in the
 layer, and the sculpting brushes; mirroring as set. A stamp is a 3D-view brush.
 The wheel moves the layer. Empty cells show the nearest voxel behind
 the layer, dimmed, so the slice keeps its place in the figure. With the pick
 tool, left picks too. Voxels protected from the assistant are tinted violet.
+While the Noise dock is in sight its box is outlined (dashed when the layer is
+outside it); with its "Drag box" on, a left drag sets the box's two axes in this
+slice instead of drawing (Alt + left still picks).
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from core.brushes import layer_region, mirrored, placed
-from qtui.brush import SCULPT, brush_edit, held_mode
+from qtui.brush import DRAGGED, SCULPT, brush_edit, held_mode
 from qtui.document import PROTECT_MODES
 from qtui.edit_view import PROTECTED_RGB, PROTECTED_TINT
 
@@ -47,6 +51,8 @@ class SliceCanvas(QtWidgets.QWidget):
         self.stroke_shift = False
         self.box_start = None  # the cell a box drag began at
         self.last = None
+        self.region = None  # the Noise dock's box (noise_panel.NoiseBox), outlined while it shows
+        self.region_start = None  # the cell a drag setting it began at
 
     # --- geometry: cells fit the widget, centred ----------------------------------------
     def _layout(self):
@@ -74,6 +80,21 @@ class SliceCanvas(QtWidgets.QWidget):
         row = V - 1 - v if self.view.flip_v else v
         return QtCore.QRect(ox + col * cell, oy + row * cell, cell, cell)
 
+    def _paint_region(self, painter):
+        """The Noise dock's box across this slice: solid with a faint fill where the layer is inside it, dashed
+        where it lies in front of or behind the layer."""
+        lo, hi = self.region.bounds()
+        view = self.view
+        rect = self._screen_rect(lo[view.u], lo[view.v]).united(self._screen_rect(hi[view.u], hi[view.v]))
+        inside = lo[view.d] <= view.depth_box.value() <= hi[view.d]
+        colour = QtGui.QColor(*self.region.COLOUR)
+        pen = QtGui.QPen(colour, 2, QtCore.Qt.PenStyle.SolidLine if inside else QtCore.Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        fill = QtGui.QColor(colour)
+        fill.setAlpha(28)
+        painter.setBrush(fill if inside else QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect.adjusted(1, 1, -1, -1))
+
     # --- drawing ----------------------------------------------------------------------
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -91,7 +112,10 @@ class SliceCanvas(QtWidgets.QWidget):
                 painter.drawLine(ox + i * cell, oy, ox + i * cell, oy + V * cell)
             for j in range(V + 1):
                 painter.drawLine(ox, oy + j * cell, ox + U * cell, oy + j * cell)
-        if self.hover is not None and self.box_start is None:  # the cells the brush covers in this layer
+        if self.region is not None and self.region.shown:
+            self._paint_region(painter)
+        dragging_region = self.region is not None and self.region.drags
+        if self.hover is not None and self.box_start is None and not dragging_region:  # the brush's cells
             painter.setPen(QtCore.Qt.PenStyle.NoPen)
             painter.setBrush(QtGui.QColor(255, 220, 0, 80))
             for u, v in self.view.footprint(*self.hover):
@@ -103,7 +127,11 @@ class SliceCanvas(QtWidgets.QWidget):
         if self.box_start is not None and self.last is not None:  # the box being dragged
             painter.setPen(QtGui.QPen(QtGui.QColor(80, 255, 110), 2))
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            painter.drawRect(self._screen_rect(*self.box_start).united(self._screen_rect(*self.last)))
+            rect = self._screen_rect(*self.box_start).united(self._screen_rect(*self.last))
+            if self.view.brush is not None and self.view.brush.kind == "ellipsoid":
+                painter.drawEllipse(rect)
+            else:
+                painter.drawRect(rect)
 
     # --- mouse ------------------------------------------------------------------------
     def mousePressEvent(self, event):
@@ -111,6 +139,11 @@ class SliceCanvas(QtWidgets.QWidget):
         if hit is None:
             return
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        if self.region is not None and self.region.drags and \
+                not event.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier:
+            self.region_start = hit  # the Noise dock's box, not the brush
+            self.view.drag_region(hit, hit)
             return
         mode = held_mode(self.view.doc.tool, event.modifiers())
         if mode == "pick":
@@ -121,7 +154,7 @@ class SliceCanvas(QtWidgets.QWidget):
         self.stroke_shift = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         self.last = hit
         self.view.doc.begin_stroke()
-        if self.view.brush is not None and self.view.brush.kind == "box":
+        if self.view.brush is not None and self.view.brush.kind in DRAGGED:
             self.box_start = hit  # the box is written on release
             self.update()
             return
@@ -133,6 +166,10 @@ class SliceCanvas(QtWidgets.QWidget):
             self.hover = hit
             self.view.report_hover(hit)
             self.update()
+        if self.region_start is not None:
+            if hit is not None:
+                self.view.drag_region(self.region_start, hit)
+            return
         if self.stroke_button is not None and hit is not None and hit != self.last and self.box_start is not None:
             self.last = hit
             self.update()
@@ -145,6 +182,9 @@ class SliceCanvas(QtWidgets.QWidget):
             self.last = hit
 
     def mouseReleaseEvent(self, event):
+        if self.region_start is not None and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.region_start = None
+            return
         if self.stroke_button is not None and event.button() == self.stroke_button:
             self.stroke_button = None
             if self.box_start is not None:
@@ -170,11 +210,14 @@ class SliceView(QtWidgets.QWidget):
         self.u, self.v, self.d, self.flip_u, self.flip_v, self.behind = SLICES[name]
         self.extent = (1, 1)
         self.brush = None  # the Brush dock's brush (the window gives it); None: single cells
+        self._bits = None  # _solid_bits': (model, colour plane, model version, bits)
 
         self.depth_box = QtWidgets.QSpinBox()
         self.depth_box.setPrefix(f"{AXIS[self.d]} = ")
         self.depth_box.setToolTip("The layer shown (the mouse wheel over the slice moves it too)")
-        self.depth_box.valueChanged.connect(self.refresh)
+        # at most once in 30 ms while a stroke changes voxels or the layer moves: each refresh reads the model
+        self._refresh_soon = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.refresh)
+        self.depth_box.valueChanged.connect(self.refresh_soon)
         self.ghost_box = QtWidgets.QCheckBox("Behind")
         self.ghost_box.setChecked(True)
         self.ghost_box.setToolTip("Show the nearest voxels behind the layer, dimmed")
@@ -211,22 +254,28 @@ class SliceView(QtWidgets.QWidget):
         layout.addLayout(steps)
         layout.addWidget(self.canvas, 1)
 
-        doc.changed.connect(self.refresh)
+        doc.changed.connect(self.refresh_soon)
         doc.display_changed.connect(self.refresh)
-        doc.protection_changed.connect(self.refresh)
+        doc.protection_changed.connect(self.refresh_soon)
         doc.reset.connect(self.on_reset)
+        doc.resized.connect(lambda: self.on_reset(keep_depth=True))
         doc.focus_changed.connect(self.on_focus)
         self.on_reset()
 
-    def on_reset(self):
+    def on_reset(self, keep_depth: bool = False):
         size = self.doc.size
         self.extent = (size[self.u], size[self.v])
+        depth = min(self.depth_box.value(), size[self.d] - 1) if keep_depth else size[self.d] // 2
         for widget in (self.depth_box, self.depth_slider):
             widget.blockSignals(True)
             widget.setRange(0, size[self.d] - 1)
-            widget.setValue(size[self.d] // 2)
+            widget.setValue(depth)
             widget.blockSignals(False)
         self.refresh()
+
+    def refresh_soon(self):
+        if not self._refresh_soon.isActive():
+            self._refresh_soon.start()
 
     def on_focus(self, x, y, z):
         self.depth_box.setValue((x, y, z)[self.d])
@@ -241,11 +290,24 @@ class SliceView(QtWidgets.QWidget):
         self.brush = brush
         brush.changed.connect(self.canvas.update)
 
+    def set_region(self, region) -> None:
+        """Outline the Noise dock's box (noise_panel.NoiseBox) while it shows; drag it out while it drags."""
+        self.canvas.region = region
+        region.changed.connect(self.canvas.update)
+
+    def drag_region(self, a, b) -> None:
+        """The Noise dock's box from cell a to cell b of this layer: its two axes here; the third stays."""
+        region = self.canvas.region
+        start, end = list(region.start), list(region.end)
+        for axis, i in ((self.u, 0), (self.v, 1)):
+            start[axis], end[axis] = min(a[i], b[i]), max(a[i], b[i])
+        region.set(start, end)
+
     def footprint(self, u: int, v: int):
         """The (u, v) cells of this layer the brush covers at a cell, mirrored (a box: the cell; the drag shows
         the rest)."""
         b, p = self.brush, self._point(u, v)
-        if b is None or b.kind in ("box", "stamp"):
+        if b is None or b.kind in (*DRAGGED, "stamp"):
             return [(u, v)]
         if b.kind == "face":
             points = layer_region(self.doc.model.colour, p, self.d)
@@ -281,7 +343,7 @@ class SliceView(QtWidgets.QWidget):
                 self.doc.apply_brush(voxels, mode)
 
     def draw_box(self, start, end, mode: str, shift: bool = False):
-        """A box brush dragged from cell `start` to cell `end` in this layer."""
+        """A box or ellipsoid brush dragged from cell `start` to cell `end` in this layer."""
         a, b = self._point(*start), self._point(*end)
         voxels = brush_edit(self.doc, self.brush, mode, b, self._normal(), hit=b if self.doc.voxel(*b) else None,
                             box_start=(a, self._normal()), box_end=b, in_slice=True, shift=shift)
@@ -297,6 +359,44 @@ class SliceView(QtWidgets.QWidget):
             return
         self.doc.hover_changed.emit(f"{self.name}: {self.doc.describe(*self._point(*hit))}")
 
+    def _nearest_behind(self, stack: np.ndarray, depth: int) -> np.ndarray:
+        """(U, V) the depth of the nearest voxel behind the layer in each cell's column, -1 where none."""
+        bits, size = self._solid_bits(stack), stack.shape[2]
+        word, bit = divmod(depth + 1 if self.behind > 0 else size - depth, 64)  # the first layer behind, in bits
+        if word >= bits.shape[2]:
+            return np.full(bits.shape[:2], -1)
+        words = bits[:, :, word:].copy()
+        words[:, :, 0] &= np.uint64((2 ** 64 - 1) << bit & (2 ** 64 - 1))  # none in front of that layer
+        first = (words != 0).argmax(axis=2)
+        found = np.take_along_axis(words, first[..., None], axis=2)[..., 0]
+        lowest = found & (~found + np.uint64(1))  # its lowest bit alone: a power of two, exact as a float
+        at = 64 * (word + first) + np.frexp(lowest.astype(np.float64))[1] - 1
+        return np.where(found != 0, at if self.behind > 0 else size - 1 - at, -1)
+
+    def _solid_bits(self, stack: np.ndarray) -> np.ndarray:
+        """Which voxels are solid, each (u, v) column as bits from the front to the back (_pack). Kept between
+        refreshes: after brush edits only the columns of the boxes they changed are packed again."""
+        model, kept = self.doc.model, self._bits
+        if kept is not None and kept[0] is model and kept[1] is model.colour:
+            boxes = self.doc.edited_boxes(kept[2])
+            if boxes is not None:
+                for lo, hi in boxes:
+                    cols = slice(lo[self.u], hi[self.u] + 1), slice(lo[self.v], hi[self.v] + 1)
+                    kept[3][cols] = self._pack(stack[cols])
+                self._bits = (model, model.colour, model.version, kept[3])
+                return kept[3]
+        self._bits = (model, model.colour, model.version, self._pack(stack))
+        return self._bits[3]
+
+    def _pack(self, stack: np.ndarray) -> np.ndarray:
+        """(U, V, D) voxels -> (U, V, D / 64) uint64 words: bit p is the voxel p layers from the front, the way
+        "behind" goes (zeros past the back)."""
+        solid = (stack if self.behind > 0 else stack[:, :, ::-1]) > 0
+        pad = -solid.shape[2] % 64
+        if pad:
+            solid = np.concatenate([solid, np.zeros((*solid.shape[:2], pad), dtype=bool)], axis=2)
+        return np.ascontiguousarray(np.packbits(solid, axis=2, bitorder="little")).view("<u8")
+
     def refresh(self):
         key_plane, lookup = self.doc.display_planes()
         stack = np.moveaxis(self.doc.model.colour.transpose(2, 1, 0), self.d, -1)  # (U, V, D)
@@ -311,13 +411,9 @@ class SliceView(QtWidgets.QWidget):
             rgb[hit] = rgb[hit] * (1 - PROTECTED_TINT) + PROTECTED_RGB * PROTECTED_TINT
         rgb[empty] = BACKGROUND
         if self.ghost_box.isChecked():
-            behind = slice(depth + 1, None) if self.behind > 0 else slice(depth - 1, None, -1) if depth else slice(0, 0)
-            rest, rest_keys = stack[:, :, behind], keys[:, :, behind]
-            if rest.shape[2]:
-                hit = rest > 0
-                first = np.take_along_axis(rest_keys, hit.argmax(axis=2)[..., None], axis=2)[..., 0]
-                show = empty & hit.any(axis=2)
-                rgb[show] = BACKGROUND * (1 - GHOST) + lookup[first[show]] * GHOST
+            near = self._nearest_behind(stack, depth)
+            iu, iv = np.nonzero(empty & (near >= 0))
+            rgb[iu, iv] = BACKGROUND * (1 - GHOST) + lookup[keys[iu, iv, near[iu, iv]]] * GHOST
         img = rgb.astype(np.uint8).transpose(1, 0, 2)  # rows v, columns u
         if self.flip_v:
             img = img[::-1]

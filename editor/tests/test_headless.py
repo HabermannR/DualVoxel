@@ -228,7 +228,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             async with ClientSession(reader, writer) as client:
                 await client.initialize()
                 tools = await client.list_tools()
-                self.assertEqual(len(tools.tools), 43)
+                self.assertEqual(len(tools.tools), 49)
                 self.assertFalse((await client.call_tool("open_model", {"path": str(ALCHEMIST)})).isError)
                 found = await client.call_tool("find_colour", {"hex_value": "#c78665", "count": 1})
                 self.assertFalse(found.isError)

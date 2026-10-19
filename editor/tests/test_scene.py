@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import sandbox  # noqa: E402,F401  the user's own editor and settings are left alone
 from core.model import SAVE_ROOT  # noqa: E402
 from core.scene import (IDENTITY, SUFFIX, Project, mirrored, orient_from_text, orient_text,  # noqa: E402
                         place_plane, place_point, placed_size, rotated)
@@ -34,6 +35,7 @@ def remove_test_files():
         copy.unlink(missing_ok=True)
         (SAVE_ROOT.parent / "export" / f"{copy.stem}.vox").unlink(missing_ok=True)
     (SAVE_ROOT / f"{PROJECT}{SUFFIX}").unlink(missing_ok=True)
+    (SAVE_ROOT / f"{PROJECT}.colors.json").unlink(missing_ok=True)
 
 
 def all_orientations():
@@ -499,7 +501,7 @@ class QtSceneTests(unittest.TestCase):
         window.close()
 
     def test_brushes_and_the_brush_dock(self):
-        from core.brushes import offsets
+        from core.brushes import ellipsoid, offsets
         window = self._window()
         doc, view, panel = window.doc, window.edit_view, window.brush_panel
         brush = view.brush
@@ -560,6 +562,40 @@ class QtSceneTests(unittest.TestCase):
         doc.undo()
         self.assertFalse(doc.model.colour.any())
 
+        # the ellipsoid brush: drag an 8 x 6 rectangle on the floor; attached, it rests there, 6 tall (auto)
+        view.rebuild()  # the undone box leaves the view now, not on the rebuild timer: picks see the floor
+        panel.kind_buttons["ellipsoid"].click()
+        self.assertEqual((brush.kind, panel.options.currentIndex(), panel.height_box.text()),
+                         ("ellipsoid", 3, "auto"))
+        view.begin_stroke(self._display(view, (4.5, 4.5, 0)))
+        view.continue_stroke(self._display(view, (11.5, 9.5, 0)))
+        self.assertIsNotNone(view.preview_actor)  # the drag shows the ellipsoid before it is written
+        view.end_stroke()
+        view.rebuild()
+        z, y, x = np.nonzero(doc.model.colour)
+        self.assertEqual((x.min(), x.max(), y.min(), y.max(), z.min(), z.max()), (4, 11, 4, 9, 0, 5))
+        self.assertEqual(len(x), len(ellipsoid((4, 4, 0), (11, 9, 0), (0, 0, 1), 6)))
+        self.assertFalse(doc.model.colour[0, 4, 4])  # the box's corners stay empty
+        # the same box through the assistant's fill_shape gives the same voxels
+        from headless_api import VoxelEditor
+        editor = VoxelEditor()
+        editor.new_model(32, 32, 16)
+        editor.fill_shape("ellipsoid", [4, 4, 0], [11, 9, 5], 3)
+        np.testing.assert_array_equal(editor.model.colour > 0, doc.model.colour > 0)
+        # a set height: 3 layers; erase sinks it into the top it was dragged on
+        panel.height_box.setValue(3)
+        self.assertEqual(brush.height, 3)
+        doc.set_tool("erase")
+        view.begin_stroke(self._display(view, (6.5, 6.5, 6)))
+        view.continue_stroke(self._display(view, (9.5, 7.5, 6)))
+        view.end_stroke()
+        self.assertFalse(doc.model.colour[3:6, 6:8, 7:9].any())
+        self.assertTrue(doc.model.colour[2, 6:8, 7:9].all())
+        doc.undo()
+        doc.undo()
+        self.assertFalse(doc.model.colour.any())
+        doc.set_tool("attach")
+
         # mirror x: the click and its mirror image
         brush.set(kind="voxel", size=1)
         panel.mirror_buttons[0].click()
@@ -607,6 +643,15 @@ class QtSceneTests(unittest.TestCase):
         top.draw([(10, 10)], "attach", shift=True)
         self.assertFalse(doc.model.colour[0, 8:13, 8:13].any())
         self.assertEqual(int((doc.model.colour > 0).sum()), 8)  # the box stays
+
+        # an ellipsoid dragged in a slice is centred on its layer
+        brush.set(kind="ellipsoid", height=0)
+        top.depth_box.setValue(8)
+        top.draw_box((2, 2), (7, 7), "attach")
+        z, y, x = np.nonzero(doc.model.colour[1:])  # above the layer the earlier strokes drew in
+        z += 1
+        self.assertEqual((z.min(), z.max(), x.min(), x.max()), (6, 11, 2, 7))
+        self.assertTrue(doc.model.colour[8, 4, 4])
         window.close()
 
     def test_magicavoxel_mouse(self):

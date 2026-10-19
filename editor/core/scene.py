@@ -12,9 +12,17 @@ A project is a JSON file, assets/<name>.project.json, with model paths relative
 to it and one line per instance:
 
     {"format": "voxelpipeline-project", "version": 1,
+     "colours": "demo.colors.json",
      "models": {"alchemist": "alchemist.vx2"},
      "scenes": [{"name": "Scene-1", "instances": [
        {"name": "alchemist-1", "model": "alchemist", "position": [0, 0, 0], "orient": "+x+y+z"}]}]}
+
+The colours are the project's own: "colours" names its colour table,
+<name>.colors.json beside it (core/colours.py), which every part uses. A
+project without one (made before projects had their own) starts from a copy
+of palette/colors.json, and Save project writes it. A part saved with other
+colours (another project's) is remapped to the nearest colours of this one and
+becomes a part of its own, <file>-<project>.vx2, leaving that file as it was.
 """
 from __future__ import annotations
 
@@ -26,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.colours import SUFFIX as COLOURS_SUFFIX, default_table, load_table
 from core.model import SAVE_ROOT, Model, read_vox_scene
 
 FORMAT = "voxelpipeline-project"
@@ -37,10 +46,9 @@ IDENTITY = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
 
 def share_tables(model: Model, base: Model | None) -> Model:
     """Give a model the base model's colour and material tables (the same objects), so a session's
-    material edits reach every model."""
+    colour and material edits reach every model."""
     if base is not None:
-        model.colors, model.materials = base.colors, base.materials
-        model.table_labs, model.by_id = base.table_labs, base.by_id
+        model.table, model.materials = base.table, base.materials
     return model
 
 
@@ -112,6 +120,16 @@ def placed_size(size, orient=IDENTITY) -> tuple[int, int, int]:
     return tuple(int(size[_source(orient, i)[0]]) for i in range(3))
 
 
+def resize_shift(orient, old_size, new_size, offset) -> tuple[int, int, int]:
+    """How far an instance moves (scene x, y, z) to keep its voxels in place when its model's box goes from
+    old_size to new_size with the old voxel (0, 0, 0) landing at `offset` (all model x, y, z)."""
+    out = []
+    for i in range(3):
+        j, sign = _source(orient, i)
+        out.append(-int(offset[j]) if sign > 0 else -int(new_size[j] - old_size[j] - offset[j]))
+    return tuple(out)
+
+
 @dataclass(eq=False)  # compared by identity: two instances may sit at the same place
 class Instance:
     name: str
@@ -137,16 +155,31 @@ class Scene:
 
 class Project:
     def __init__(self, tables_from: Model | None = None):
-        self.tables_from = tables_from
+        self.tables_from = tables_from  # its material table is shared by the project's models
+        self.table = default_table().copy()  # the project's colours, every part's; a file once saved
+        self.notes: list[str] = []  # what the last load or add_model did that the user should hear
         self.path: Path | None = None
         self.models: dict[str, Model] = {}  # name -> its one Model; its .path is the model's file
         self.scenes: list[Scene] = []
         self._saved_versions: dict[str, int] = {}
 
+    @property
+    def name(self) -> str | None:
+        return self.path.name.removesuffix(SUFFIX) if self.path else None
+
     # --- models ----------------------------------------------------------------------------
+    def new_model(self) -> Model:
+        """An empty Model on the project's colours and the shared materials."""
+        model = Model()
+        if self.tables_from is not None:
+            model.materials = self.tables_from.materials
+        model.table = self.table
+        return model
+
     def add_model(self, path, reuse=()) -> str:
         """Load a .vx2 into the project (once: a model already in it, or one in `reuse` with that path, is
-        used as it is). Returns its name in the project."""
+        used as it is). Returns its name in the project. A model saved with other colours is remapped to
+        the project's (see the module's note) and noted in `notes`."""
         path = Path(path).resolve()
         for name, model in self.models.items():
             if model.path is not None and Path(model.path).resolve() == path:
@@ -155,11 +188,21 @@ class Project:
         if model is None:
             if path.suffix != ".vx2":
                 raise ValueError("scenes place .vx2 models")
-            model = share_tables(Model(), self.tables_from)
+            model = self.new_model()
             model.open(path)
+        source = model.table.title
+        moved = model.remap_to(self.table)
         name = self._unique(path.stem, self.models)
         self.models[name] = model
         self._saved_versions[name] = model.version
+        if moved:  # a copy of its own: the file keeps its colours for whoever else uses it
+            taken = set(self.models) | {p.stem for p in SAVE_ROOT.glob("*.vx2")}
+            stem = self._unique(f"{path.stem}-{self.name or 'copy'}", taken)
+            model.path = SAVE_ROOT / f"{stem}.vx2"
+            self._saved_versions[name] = -1  # unsaved: Save project writes it
+            self.notes.append(f"{path.name} was saved with {source}: {moved} of its colours moved to the nearest "
+                              f"of {self.table.title}. It is the part {name}, saved with the project as "
+                              f"assets/{stem}.vx2; {path.name} stays as it was.")
         return name
 
     def model_size(self, name: str) -> tuple[int, int, int]:
@@ -178,6 +221,10 @@ class Project:
 
     def modified_models(self) -> list[str]:
         return [name for name, m in self.models.items() if m.version != self._saved_versions.get(name)]
+
+    def colours_modified(self) -> bool:
+        """Colours changed since the project was opened or saved (Save project restamps every part)."""
+        return self.table.modified
 
     # --- scenes and instances -----------------------------------------------------------------
     def add_scene(self, name: str | None = None) -> Scene:
@@ -225,6 +272,17 @@ class Project:
         lo2, hi2 = self.box(instance)
         x, y = np.floor(centre[:2] - (lo2[:2] + hi2[:2]) / 2).astype(int) + lo2[:2]
         instance.position = (int(x), int(y), int(lo[2]))
+
+    def follow_resize(self, model: str, old_size, new_size, offset) -> list[Instance]:
+        """After a model's box was resized (its old voxel (0, 0, 0) now at `offset`): move each of its
+        instances so its voxels stay where they were in the scene. Returns the instances moved."""
+        moved = []
+        for _, instance in self.instances_of(model):
+            delta = resize_shift(instance.orient, old_size, new_size, offset)
+            if any(delta):
+                instance.position = tuple(int(p + d) for p, d in zip(instance.position, delta))
+                moved.append(instance)
+        return moved
 
     def placed_planes(self, instance: Instance):
         """The instance's (colour, material) planes as placed, read from its model now."""
@@ -303,8 +361,12 @@ class Project:
             target = self.path
         else:
             raise ValueError("name the project")
+        stem = target.name.removesuffix(SUFFIX)
+        colours_path = (self.table.path if name is None and self.table.path is not None
+                        else target.with_name(f"{stem}{COLOURS_SUFFIX}"))
+        restamp = self.table.modified  # every part is saved: its fingerprint names the new colours
         if save_models:
-            for name_ in self.modified_models():
+            for name_ in (list(self.models) if restamp else self.modified_models()):
                 model = self.models[name_]
                 if model.path is not None and Path(model.path).suffix == ".vx2":
                     model.save_path(model.path)  # where it was opened or saved, wherever that is
@@ -314,7 +376,10 @@ class Project:
         missing = [n for n, m in self.models.items() if m.path is None]
         if missing:
             raise ValueError(f"save these models first: {', '.join(missing)}")
+        self.table.owner = stem
+        self.table.save(colours_path)
         data = {"format": FORMAT, "version": 1,
+                "colours": os.path.relpath(colours_path, target.parent).replace("\\", "/"),
                 "models": {n: os.path.relpath(m.path, target.parent).replace("\\", "/") for n, m in self.models.items()},
                 "scenes": [{"name": s.name, "instances": [i.to_json() for i in s.instances]} for s in self.scenes]}
         target.write_text(_dumps(data), encoding="utf-8")
@@ -329,6 +394,12 @@ class Project:
         self.models.clear()
         self._saved_versions.clear()
         self.scenes.clear()
+        self.notes = []
+        self.path = path
+        if data.get("colours"):
+            self.table = load_table(path.parent / data["colours"], owner=self.name)
+        else:  # from before projects had their own colours: Save project writes <name>.colors.json
+            self.table = default_table().copy(owner=self.name)
         for name, relative in data.get("models", {}).items():
             loaded = self.add_model(path.parent / relative, reuse)
             if loaded != name:  # keep the file's names, which the instances use
@@ -352,9 +423,10 @@ class Project:
         self._saved_versions.clear()
         self.scenes.clear()
         self.path = None
+        self.notes = []
         names = {}
         for k, (size, voxels) in enumerate(data["models"]):
-            model = share_tables(Model(), self.tables_from)
+            model = self.new_model()
             model.colour, model.material = model.import_vox_model(size, voxels, data["palette"], data["materials"])
             names[k] = self._unique(f"{path.stem}-{k}", self.models)
             self.models[names[k]] = model  # no file and no saved version yet: the project's save writes it
@@ -384,7 +456,7 @@ def _dumps(data: dict) -> str:
     """The project as JSON with one line per instance, so the file reads and diffs well."""
     models = json.dumps(data["models"], indent=4).replace("\n}", "\n  }")
     lines = ["{", f'  "format": {json.dumps(data["format"])},', f'  "version": {data["version"]},',
-             f'  "models": {models},', '  "scenes": [']
+             f'  "colours": {json.dumps(data["colours"])},', f'  "models": {models},', '  "scenes": [']
     for n, scene in enumerate(data["scenes"]):
         instances = ",\n".join(f"      {json.dumps(i)}" for i in scene["instances"])
         body = f"\n{instances}\n    " if instances else ""

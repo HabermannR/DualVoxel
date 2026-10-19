@@ -5,7 +5,8 @@ frames the model. Pause (the Light dock's button, or F9) stops drawing and frees
 the GPU; the last picture stays. Tilt blur (the Light dock) switches the
 tilt-shift band on and off. A hidden or closed render dock draws nothing either. The engine starts after the
 window shows (the first start builds shaders and DLSS and takes about half a
-minute).
+minute). render_still draws a picture of any size from the dock's camera and light into a file, in
+steps (the window stays responsive), showing its progress here.
 """
 from __future__ import annotations
 
@@ -19,10 +20,14 @@ from core.camera import OrbitCamera
 
 MAX_WIDTH = 1600  # cap on the render size; the image is scaled to the dock beyond it
 RESIZE_DELAY_MS = 250
+STILL_LIMITS = (8192, 8192, 4096)  # width, height, samples of a picture render_still draws
+STILL_SHOW_INTERVAL = 0.25  # seconds between showing a still's progress in the dock
 
 
 class RenderView(QtWidgets.QWidget):
     paused_changed = QtCore.Signal(bool)
+    still_changed = QtCore.Signal(bool)  # a picture started (True) or ended
+    still_finished = QtCore.Signal(str, str)  # the saved file ("" when it failed or was cancelled), a message
 
     def __init__(self, doc):
         super().__init__()
@@ -44,9 +49,12 @@ class RenderView(QtWidgets.QWidget):
         self.custom_light = None  # None: the built-in light; else the 18 numbers of renderer_set_light
         self.source = None  # None: the model being edited; else a callable giving the Model to draw (a scene)
         self._drawn = None  # the Model drawn last, to reframe when another one takes its place
+        self.still = None  # the picture render_still is drawing: its file, size, camera, samples so far
         doc.reset.connect(self._on_reset)
+        doc.resized.connect(self._on_reset)
         doc.material_edited.connect(self._on_material_edited)
         doc.tables_changed.connect(lambda: self._on_material_edited(-1))
+        doc.colours_changed.connect(lambda: self._on_material_edited(-1))  # the colours go with the tables
 
     def start(self):
         try:
@@ -143,7 +151,87 @@ class RenderView(QtWidgets.QWidget):
     def samples(self) -> int:
         return self.engine.samples if self.engine is not None else 0
 
+    # --- pictures of any size ------------------------------------------------------------
+    def render_still(self, path, width: int, height: int, samples: int, look: str = "none") -> str | None:
+        """Start a picture of what the dock shows (its camera, light and tilt blur, the model as it is now)
+        at width x height, `samples` per pixel, saved as the PNG `path` with a finish from
+        postprocess.LOOKS. It draws in steps on this dock's ticks, while pausing and edits wait. Returns
+        why it cannot start, else None; still_finished tells how it ended."""
+        from postprocess import LOOKS
+        max_width, max_height, max_samples = STILL_LIMITS
+        if self.engine is None:
+            return "The renderer is not running."
+        if self.still is not None:
+            return "A picture is already rendering."
+        if not (16 <= width <= max_width and 16 <= height <= max_height and 1 <= samples <= max_samples):
+            return f"Width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}."
+        if look not in LOOKS:
+            return f"Unknown finish {look!r}: one of {', '.join(LOOKS)}."
+        self.engine.sync(self.drawn_model(), self.camera, force=True)
+        cam = self.camera
+        self.still = {"path": str(path), "look": look, "samples": int(samples), "done": 0, "shown": 0.0,
+                      "rgba": np.zeros((height, width, 4), dtype=np.uint8),
+                      "view": [np.array(v, dtype=float) for v in (cam.pos, cam.fwd, cam.right, cam.up)]}
+        self.engine.renderer.capture(int(samples))
+        self._tick.start()  # also while paused: the picture was asked for
+        self.still_changed.emit(True)
+        self.update()
+        return None
+
+    def cancel_still(self):
+        if self.still is not None:
+            self._end_still("", "Picture cancelled.")
+
+    def _still_step(self):
+        still = self.still
+        try:
+            still["done"] = self.engine.renderer.frame(still["rgba"], *still["view"], False)
+        except Exception as error:  # a size the GPU cannot hold, a lost device
+            self._end_still("", f"The picture failed: {error}")
+            return
+        now = time.perf_counter()
+        finished = still["done"] >= still["samples"]
+        if finished or now - still["shown"] >= STILL_SHOW_INTERVAL:
+            still["shown"] = now
+            self._show(still["rgba"])
+        if finished:
+            self._save_still()
+
+    def _save_still(self):
+        from PIL import Image
+        from postprocess import finish
+        still = self.still
+        try:
+            Image.fromarray(finish(still["rgba"][..., :3].copy(), still["look"])).save(still["path"], format="PNG")
+        except (OSError, ValueError) as error:
+            self._end_still("", f"The picture could not be saved: {error}")
+            return
+        h, w = still["rgba"].shape[:2]
+        self._end_still(still["path"], f"Saved a {w} x {h} picture ({still['samples']} spp) to {still['path']}")
+
+    def _end_still(self, path: str, message: str):
+        self.still = None
+        if self.engine is not None:
+            self.engine.renderer.capture(0)
+            self.engine.samples = 0  # the live picture draws again at the dock's size
+            self.engine.last_frame = 0.0
+            self.engine.shown_version = -1  # and catches up with edits made meanwhile
+        if self.paused:
+            self._tick.stop()
+        self.still_changed.emit(False)
+        self.still_finished.emit(path, message)
+        self.update()
+
+    def _show(self, rgba):
+        h, w = rgba.shape[:2]
+        self._pixels = rgba.copy()
+        self.image = QtGui.QImage(self._pixels.data, w, h, 4 * w, QtGui.QImage.Format.Format_RGBA8888)
+        self.update()
+
     def tick(self):
+        if self.still is not None:
+            self._still_step()  # also hidden: the picture was asked for
+            return
         if not self.isVisible():
             return  # a hidden or closed dock costs no GPU time
         engine = self.engine
@@ -154,11 +242,7 @@ class RenderView(QtWidgets.QWidget):
         engine.sync(model, self.camera)
         moving = time.perf_counter() < self.moving_until
         if engine.frame(self.camera, moving):
-            rgba = engine.rgba
-            h, w = rgba.shape[:2]
-            self._pixels = rgba.copy()
-            self.image = QtGui.QImage(self._pixels.data, w, h, 4 * w, QtGui.QImage.Format.Format_RGBA8888)
-            self.update()
+            self._show(engine.rgba)
 
     # --- drawing ----------------------------------------------------------------------
     def paintEvent(self, event):
@@ -171,10 +255,15 @@ class RenderView(QtWidgets.QWidget):
             painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
             painter.drawImage(target, self.image)
             painter.setPen(QtGui.QColor(200, 200, 200, 160))
+            if self.still is not None:
+                h, w = self.still["rgba"].shape[:2]
+                status = f"picture {w} x {h} · {self.still['done']} / {self.still['samples']} spp"
+            else:
+                status = f"paused · {self.samples} spp" if self.paused else f"{self.samples} spp"
             painter.drawText(self.rect().adjusted(6, 4, -6, -4),
                              QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignBottom,
-                             (f"paused · {self.samples} spp" if self.paused else f"{self.samples} spp")
-                             + (" · no DLSS" if self.engine is not None and self.engine.renderer.reconstruction == 0 else ""))
+                             status + (" · no DLSS" if self.engine is not None
+                                       and self.engine.renderer.reconstruction == 0 else ""))
         if self.message:
             painter.setPen(QtGui.QColor(220, 220, 220))
             # Wrapped anywhere: the message can hold a long folder path without spaces.
@@ -218,6 +307,7 @@ class RenderView(QtWidgets.QWidget):
         self._moved()
 
     def close_engine(self):
+        self.cancel_still()
         self._tick.stop()
         if self.engine is not None:
             self.engine.close()

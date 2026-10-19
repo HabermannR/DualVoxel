@@ -5,7 +5,6 @@ import base64
 import io
 import os
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -13,8 +12,7 @@ from pathlib import Path
 
 EDITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EDITOR))
-LINK = Path(tempfile.mkdtemp()) / "live_link.json"
-os.environ["DUALVOXEL_LINK_FILE"] = str(LINK)  # never the link file of an editor the user has open
+from sandbox import LINK_FILE as LINK  # noqa: E402  never the link file of an editor the user has open
 
 import numpy as np  # noqa: E402
 
@@ -260,7 +258,7 @@ class LinkTests(unittest.TestCase):
             async with stdio_client(params) as (reader, writer):
                 async with ClientSession(reader, writer) as client:
                     await client.initialize()
-                    self.assertEqual(len((await client.list_tools()).tools), 43)
+                    self.assertEqual(len((await client.list_tools()).tools), 49)
                     hello = await client.call_tool("connect_editor", {})
                     self.assertFalse(hello.isError, hello.content)
                     painted = await client.call_tool("paint_box", {"start": [0, 0, 0], "end": [5, 5, 0], "colour": 54})

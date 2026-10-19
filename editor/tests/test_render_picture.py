@@ -1,0 +1,172 @@
+"""High-resolution pictures: save_render (and the MCP render_file) take print sizes that a picture handed back
+may not; the Render dock draws a still of any size in steps and saves it finished; File > Render picture… and
+the Light dock's button ask for it. No GPU here: a stand-in engine draws."""
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+
+EDITOR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(EDITOR))
+import sandbox  # noqa: E402,F401  the user's own editor and settings are left alone
+from headless_api import VoxelEditor  # noqa: E402
+
+
+class FakeRenderer:
+    """Fills the picture with one colour, `step` samples a call, as render_frame does in capture mode."""
+    reconstruction = 1
+
+    def __init__(self, step=100):
+        self.step, self.done, self.captures, self.views = step, 0, [], []
+
+    def capture(self, samples):
+        self.captures.append(samples)
+        self.done = 0
+
+    def frame(self, out, eye, forward, right, up, moving):
+        self.views.append((tuple(eye), out.shape))
+        out[...] = (200, 40, 30, 255)
+        self.done += self.step
+        return self.done
+
+
+class FakeEngine:
+    def __init__(self):
+        self.renderer = FakeRenderer()
+        self.samples, self.last_frame, self.shown_version = 0, 0.0, 0
+        self.synced = 0
+
+    def sync(self, model, camera, force=False):
+        self.synced += 1
+
+
+class HeadlessLimitTests(unittest.TestCase):
+    def setUp(self):
+        self.editor = VoxelEditor()
+        self.editor.new_model(4, 4, 4)
+        self.editor.paint_box([0, 0, 0], [3, 3, 3], 14)
+
+    def test_a_picture_handed_back_stays_screen_sized(self):
+        with self.assertRaisesRegex(ValueError, "1080"):
+            self.editor.render_png(width=2160, height=2700)
+        self.assertIsNone(self.editor._engine)
+
+    def test_a_saved_picture_may_be_print_sized_up_to_its_own_limit(self):
+        with self.assertRaisesRegex(ValueError, "8192"):
+            self.editor.save_render("too_big.png", width=9000, height=9000)
+        with self.assertRaisesRegex(ValueError, "4096"):
+            self.editor.save_render("too_many.png", width=2160, height=2700, samples=5000)
+        self.assertIsNone(self.editor._engine)  # refused before the engine starts
+
+
+class RenderStillTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from PySide6 import QtWidgets
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+
+    def setUp(self):
+        from qtui.document import Document
+        from qtui.render_view import RenderView
+        self.doc = Document()
+        self.doc.new(8, 8, 8, ground=2)
+        self.view = RenderView(self.doc)
+        self.view.resize(300, 200)
+        self.path = Path(tempfile.mkdtemp()) / "still.png"
+        self.ended = []
+        self.view.still_finished.connect(lambda path, message: self.ended.append((path, message)))
+
+    def run_still(self):
+        for _ in range(100):
+            if self.view.still is None:
+                return
+            self.view.tick()
+        self.fail("the still never finished")
+
+    def test_without_the_renderer_it_says_so(self):
+        self.assertEqual(self.view.render_still(self.path, 640, 480, 64), "The renderer is not running.")
+
+    def test_sizes_samples_and_finish_are_checked(self):
+        self.view.engine = FakeEngine()
+        self.assertIn("8192", self.view.render_still(self.path, 9000, 480, 64))
+        self.assertIn("4096", self.view.render_still(self.path, 640, 480, 9999))
+        self.assertIn("finish", self.view.render_still(self.path, 640, 480, 64, look="glossy"))
+        self.assertIsNone(self.view.still)
+
+    def test_a_still_draws_in_steps_at_its_own_size_and_saves_finished(self):
+        from PIL import Image
+        engine = self.view.engine = FakeEngine()
+        self.view.camera.pos = np.array([1.0, 2.0, 3.0])
+        self.assertIsNone(self.view.render_still(self.path, 2160, 2700, 300, look="none"))
+        self.assertEqual(self.view.render_still(self.path, 640, 480, 64), "A picture is already rendering.")
+        self.view.camera.pos = np.array([9.0, 9.0, 9.0])  # moving the camera meanwhile leaves the picture alone
+        self.run_still()
+        self.assertEqual(len(engine.renderer.views), 3)  # 300 samples, 100 a step
+        self.assertTrue(all(view == ((1.0, 2.0, 3.0), (2700, 2160, 4)) for view in engine.renderer.views))
+        self.assertEqual(engine.renderer.captures, [300, 0])  # back to live frames after
+        self.assertEqual(engine.shown_version, -1)  # the live view catches up with edits made meanwhile
+        self.assertEqual(self.ended, [(str(self.path), f"Saved a 2160 x 2700 picture (300 spp) to {self.path}")])
+        picture = Image.open(self.path)
+        self.assertEqual(picture.size, (2160, 2700))
+        self.assertEqual(picture.getpixel((5, 5)), (200, 40, 30))
+
+    def test_the_finish_is_applied(self):
+        from PIL import Image
+        self.view.engine = FakeEngine()
+        self.view.render_still(self.path, 64, 64, 100, look="night")
+        self.run_still()
+        self.assertNotEqual(Image.open(self.path).getpixel((32, 32)), (200, 40, 30))
+
+    def test_cancel_saves_nothing_and_goes_back_to_live_frames(self):
+        engine = self.view.engine = FakeEngine()
+        self.view.render_still(self.path, 640, 480, 1000)
+        self.view.tick()
+        self.view.cancel_still()
+        self.assertIsNone(self.view.still)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(engine.renderer.captures, [1000, 0])
+        self.assertEqual(self.ended, [("", "Picture cancelled.")])
+
+
+class WindowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from PySide6 import QtWidgets
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+
+    def test_file_menu_and_light_dock_ask_for_a_picture_in_the_render_docks_shape(self):
+        from PySide6 import QtCore, QtWidgets
+        from qtui.window import EditorWindow
+        window = EditorWindow()
+        window._engine_started = True
+        window.settings = QtCore.QSettings(str(Path(tempfile.mkdtemp()) / "layout.ini"),
+                                           QtCore.QSettings.Format.IniFormat)
+        window.confirm_close = lambda: True
+        try:
+            file = next(m for m in window.menuBar().findChildren(QtWidgets.QMenu) if m.title() == "&File")
+            self.assertIn("Render picture…", [a.text() for a in file.actions()])
+            self.assertEqual(window.light_panel.picture_button.text(), "Render picture…")
+            window.render_view.resize(400, 500)
+            dialog, read = window.picture_form()
+            boxes = dialog.widgets
+            boxes["width"].setValue(2000)
+            self.assertEqual(boxes["height"].value(), 2500)  # the dock's 4:5 kept
+            boxes["height"].setValue(1000)
+            self.assertFalse(boxes["keep"].isChecked())  # a height of one's own
+            boxes["look"].setCurrentText("night")
+            boxes["path"].setText(str(Path(tempfile.mkdtemp()) / "shot"))
+            path, width, height, samples, look = read()
+            self.assertTrue(path.endswith("shot.png"))
+            self.assertEqual((width, height, samples, look), (2000, 1000, 512, "night"))
+            window.render_view.still = {"rgba": np.zeros((4, 4, 4), np.uint8), "done": 0, "samples": 1}
+            window.render_view.still_changed.emit(True)
+            self.assertEqual(window.light_panel.picture_button.text(), "Cancel picture")
+            window.render_view.still = None
+        finally:
+            window.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

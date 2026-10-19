@@ -3,6 +3,11 @@
 Views never keep a copy of the voxels: they read `model.colour` / `model.material`
 (planes shaped (z, y, x)) when `changed` fires. A stroke (press, drag, release in
 any view) is one undo step.
+
+A whole-model transform (resize, fit, shift, turn, flip; from here, the live link,
+or undo and redo of one) is noticed on `changed`: the user's protection moves with
+the voxels, `transformed` tells the scenes (instances keep their voxels in place
+when a part is resized), and `resized` tells the views when the size changed.
 """
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from PySide6 import QtCore
 
-from core.model import HISTORY_LIMIT, Model
+from core.model import Model, transform_plane
 from material_source import send_tables  # palette/, on the path through core.model
 
 # The edit views' material key: a colour per group (as the Dear PyGui editor's corner marks),
@@ -43,6 +48,8 @@ PROTECT_MODES = ("protect", "unprotect")  # the Protect mode, and with Shift lif
 class Document(QtCore.QObject):
     changed = QtCore.Signal()          # voxels changed
     reset = QtCore.Signal()            # a different model (new, open): sizes may change
+    resized = QtCore.Signal()          # the same model, its box another size (resize, fit, turn, their undo)
+    transformed = QtCore.Signal(object, object)  # (model, (count, op, old size, new size)): see core.model
     current_changed = QtCore.Signal()  # colour, material or tool
     focus_changed = QtCore.Signal(int, int, int)  # slice views follow a voxel picked in 3D
     hover_changed = QtCore.Signal(str)
@@ -50,6 +57,8 @@ class Document(QtCore.QObject):
     material_edited = QtCore.Signal(int)  # a material's fields changed (live; saved with the model)
     tables_changed = QtCore.Signal()      # the list of materials changed (own materials added, other model)
     protection_changed = QtCore.Signal()  # voxels the user protected from the assistant
+    colours_changed = QtCore.Signal()     # a colour slot's value changed (live, every model on that table)
+    colour_table_changed = QtCore.Signal()  # another table shown, or it was saved: who owns it, what changed
 
     def __init__(self):
         super().__init__()
@@ -58,16 +67,69 @@ class Document(QtCore.QObject):
         # Per model (a project's parts each keep theirs), for this session: voxels the assistant may not
         # change over the live link. Not undo steps and not saved.
         self._protection = weakref.WeakKeyDictionary()
-        self.rgb = np.zeros((256, 3), dtype=np.uint8)  # colour slot -> sRGB
-        for c in self.model.colors:
-            self.rgb[c["id"]] = c["rgb"]
+        # Per model: (version, (x, y, z) low, high) of the boxes the last few strokes and undo steps changed,
+        # so views can reread only those (edited_boxes).
+        self._edits = weakref.WeakKeyDictionary()
+        # Per model: its transform_count when last seen here, so each transform is followed once.
+        self._seen = weakref.WeakKeyDictionary({self.model: self.model.transform_count})
+        self.changed.connect(self._follow_transforms)  # first, so later slots see the new size settled
+        # The open project, set by the scene docks: its colours are the ones that can be changed.
+        self.project = lambda: None
         self.colour = self.model.nearest_slot([150, 150, 150])
         self.material = 0
         self.tool = "attach"
         self.show_materials = False  # the edit views colour voxels by material instead of colour
+        self.shift_wrap = True  # a shift brings what leaves one side in at the other (the Model dock's Wrap)
         self.picked = None  # the voxel last picked (Alt + left, or the Pick mode)
         self.material_rgb = material_colours(self.model.all_materials())
         self._before = None
+
+    @property
+    def rgb(self) -> np.ndarray:
+        """Colour slot -> sRGB, (256, 3), from the shown model's colour table."""
+        return self.model.table.rgb
+
+    # --- colours: the shown model's table, which only its project changes ----------------------
+    def colours_editable(self) -> tuple[bool, str]:
+        """(whether the shown colours can be changed here, why not)."""
+        table, project = self.model.table, self.project()
+        if project is not None and table is project.table:
+            if project.path is None:
+                return False, ("Colours belong to a project and are saved beside it. Save the project "
+                               "(Scene → Save project) to give it its own colours file; then they can be changed.")
+            return True, ""
+        if table.is_default:
+            return False, ("The default colours (palette/colors.json, built by palette/build_colors.py) never "
+                           "change here. Open or save a project to have colours of its own.")
+        where = f" ({table.path.name})" if table.path else ", a project no longer open"
+        return False, f"These are {table.title}{where}: open that project to change them."
+
+    def colour_models(self) -> list[Model]:
+        """The models a colour change reaches: every model open on the shown table."""
+        project = self.project()
+        models = [m for m in project.models.values() if m.table is self.model.table] if project else []
+        return models if any(m is self.model for m in models) else [self.model, *models]
+
+    def set_slot_colour(self, slot: int, rgb) -> bool:
+        """Change what a colour slot looks like, live in every model on this table (the project's)."""
+        editable, why = self.colours_editable()
+        if not editable:
+            raise ValueError(why)
+        if not self.model.table.set_rgb(slot, rgb):
+            return False
+        self._colours_changed()
+        return True
+
+    def revert_colours(self, slot: int | None = None) -> None:
+        """A slot (or all) back to the project's colours as saved."""
+        if self.colours_editable()[0] and self.model.table.revert(slot):
+            self._colours_changed()
+
+    def _colours_changed(self) -> None:
+        self.colours_changed.emit()
+        self.colour_table_changed.emit()
+        self.display_changed.emit()  # the edit views redraw their colours
+        self.current_changed.emit()
 
     # --- current colour, material, tool ------------------------------------------------
     def set_colour(self, slot: int) -> None:
@@ -246,14 +308,68 @@ class Document(QtCore.QObject):
         self.model = model
         self._model_switched()
 
+    # --- the whole model: its box and everything in it (each one undo step) ---------------------
+    def resize(self, size, anchor=("centre", "centre", "low")) -> int:
+        """A new box (x, y, z), the voxels placed by `anchor` per axis (low, centre, high). Returns how many
+        solid voxels were left outside and lost."""
+        lost = self.model.resize(size, anchor=anchor)
+        self.changed.emit()
+        return lost
+
+    def fit(self) -> bool:
+        """Shrink the box to the solid voxels; False when there are none or it already fits."""
+        fitted = self.model.fit() is not None
+        self.changed.emit()
+        return fitted
+
+    def shift(self, delta, wrap: bool = True) -> int:
+        """Move every voxel by (dx, dy, dz); wrap brings what leaves one side in at the other. Returns how many
+        solid voxels were lost (none with wrap)."""
+        lost = self.model.shift(delta, wrap)
+        self.changed.emit()
+        return lost
+
+    def rotate(self, axis: int, quarter_turns: int = 1) -> None:
+        self.model.rotate(axis, quarter_turns)
+        self.changed.emit()
+
+    def flip(self, axis: int) -> None:
+        self.model.flip(axis)
+        self.changed.emit()
+
+    def _follow_transforms(self) -> None:
+        """On `changed`: follow each transform of the shown model since it was last seen (see the module's note)."""
+        model = self.model
+        seen = self._seen.get(model)
+        self._seen[model] = model.transform_count
+        if seen is None or seen == model.transform_count:
+            return
+        entries = model.transforms_since(seen) or []
+        mask = self._protection.get(model)
+        for entry in entries:
+            if mask is not None and mask.shape == tuple(entry[2][::-1]):
+                mask = transform_plane(mask, entry[1])
+            self.transformed.emit(model, entry)
+        if mask is not None:
+            if mask.shape == model.colour.shape:
+                self._protection[model] = mask
+            else:  # a transform too long ago to follow
+                self._protection.pop(model, None)
+            self.protection_changed.emit()
+        self.picked = None
+        if not entries or any(e[2] != e[3] for e in entries):
+            self.resized.emit()
+
     def _model_switched(self) -> None:
         """Another model (new, opened, a project's): its own materials replace the last one's."""
+        self._seen[self.model] = self.model.transform_count
         self.picked = None
         if not self.model.has_material(self.material):
             self.material = 0
         self.material_rgb = material_colours(self.model.all_materials())
         self.reset.emit()
         self.tables_changed.emit()
+        self.colour_table_changed.emit()
         self.current_changed.emit()
         self.changed.emit()
 
@@ -290,11 +406,17 @@ class Document(QtCore.QObject):
 
     def undo(self) -> None:
         if self.model.undo():
+            self._log_step(self.model.redo_stack[-1])
             self.changed.emit()
 
     def redo(self) -> None:
         if self.model.redo():
+            self._log_step(self.model.undo_stack[-1])
             self.changed.emit()
+
+    def _log_step(self, step) -> None:
+        z, y, x = step.box
+        self._log_box((x.start, y.start, z.start), (x.stop - 1, y.stop - 1, z.stop - 1))
 
     # --- strokes: direct writes, one undo step per stroke ----------------------------------
     def begin_stroke(self) -> None:
@@ -322,6 +444,7 @@ class Document(QtCore.QObject):
         changed = int(((self.model.colour[z, y, x] != before[0]) | (self.model.material[z, y, x] != before[1])).sum())
         if changed:
             self.model.version += 1
+            self._log_edit(x, y, z)
             self.changed.emit()
         if own_stroke:
             self.end_stroke()
@@ -349,18 +472,34 @@ class Document(QtCore.QObject):
         changed = int(((self.model.colour[z, y, x] != before[0]) | (self.model.material[z, y, x] != before[1])).sum())
         if changed:
             self.model.version += 1
+            self._log_edit(x, y, z)
             self.changed.emit()
         if own_stroke:
             self.end_stroke()
         return changed
+
+    def _log_edit(self, x, y, z) -> None:
+        self._log_box((int(x.min()), int(y.min()), int(z.min())), (int(x.max()), int(y.max()), int(z.max())))
+
+    def _log_box(self, lo, hi) -> None:
+        log = self._edits.setdefault(self.model, [])
+        log.append((self.model.version, lo, hi))
+        del log[:-256]
+
+    def edited_boxes(self, since: int, model: Model | None = None):
+        """The boxes ((x, y, z) low, high, inclusive) a model's voxels changed in after its version `since`, or
+        None when they also changed in other ways (the live link, opening): then read them all."""
+        model = model or self.model
+        if since == model.version:
+            return []
+        log = self._edits.get(model, [])
+        boxes = [(lo, hi) for version, lo, hi in log if version > since]
+        return boxes if log and log[-1][0] == model.version and len(boxes) == model.version - since else None
 
     def end_stroke(self) -> None:
         if self._before is None:
             return
         before_c, before_m = self._before
         self._before = None
-        if before_c.shape == self.model.colour.shape and (
-                not np.array_equal(before_c, self.model.colour) or not np.array_equal(before_m, self.model.material)):
-            self.model.undo_stack.append((before_c, before_m))
-            del self.model.undo_stack[:-HISTORY_LIMIT]
-            self.model.redo_stack.clear()
+        if before_c.shape == self.model.colour.shape:
+            self.model.record(before_c, before_m)  # the step keeps only the box the stroke changed

@@ -179,14 +179,19 @@ class VoxelRenderer:
         """A still from a given camera (world units, as the editor's Render dock holds it). Returns RGBA."""
         out = np.zeros((height, width, 4), dtype=np.uint8)
         pointer = out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
-        self.dll.renderer_set_capture_samples(samples)
+        self.capture(samples)
         done = 0
         for _ in range(100000):
             done = self.dll.render_frame(pointer, width, height, *eye, *forward, *right, *up, False)
             if done >= samples:
                 break
-        self.dll.renderer_set_capture_samples(0)
+        self.capture(0)
         return out
+
+    def capture(self, samples: int) -> None:
+        """Make each frame() accumulate a still towards `samples` (render_camera in steps, for a window that
+        stays responsive); 0 goes back to live frames."""
+        self.dll.renderer_set_capture_samples(samples)
 
     @property
     def centre(self):

@@ -207,6 +207,41 @@ def mirror(axis: str = "x", keep: str = "low") -> dict:
 
 
 @mcp.tool()
+def resize_model(size: list[int], anchor: str | list[str] | None = None, offset: list[int] | None = None) -> dict:
+    """Give the model a new box [x, y, z] (1-256 a side), as MagicaVoxel's size fields: room to grow, or a crop.
+    anchor places the voxels per axis: "low", "centre" or "high" (one for all, or [x, y, z]; default x and y
+    centred, z low: on the floor); or offset [x, y, z] says where the old voxel [0, 0, 0] lands. Voxels left
+    outside are lost (lost_voxels), never protected ones. In a project, its instances keep their voxels in place."""
+    return _do("resize_model", size=size, anchor=anchor, offset=offset)
+
+
+@mcp.tool()
+def fit_model() -> dict:
+    """Shrink the model's box to its solid voxels."""
+    return _do("fit_model")
+
+
+@mcp.tool()
+def shift_model(offset: list[int], wrap: bool = True) -> dict:
+    """Move every voxel by [dx, dy, dz] inside the box (MagicaVoxel's Move): wrap brings what leaves one side
+    in at the other, else it is lost (never protected voxels)."""
+    return _do("shift_model", offset=offset, wrap=wrap)
+
+
+@mcp.tool()
+def rotate_model(axis: str = "z", turns: int = 1) -> dict:
+    """Turn the whole model by quarter turns about "x", "y" or "z", counter-clockwise looking down the axis;
+    the box turns with it (a 32 x 16 box turned about z is 16 x 32)."""
+    return _do("rotate_model", axis=axis, turns=turns)
+
+
+@mcp.tool()
+def flip_model(axis: str = "x") -> dict:
+    """Mirror the whole model along "x", "y" or "z" (unlike mirror, which copies one half onto the other)."""
+    return _do("flip_model", axis=axis)
+
+
+@mcp.tool()
 def copy_box(start: list[int], end: list[int], offset: list[int], move: bool = False) -> dict:
     """Copy the solid voxels of a box by offset [dx, dy, dz]; move empties the source first."""
     return _do("copy_box", start=start, end=end, offset=offset, move=move)
@@ -331,7 +366,7 @@ def merge_scene(scene: str | None = None) -> dict:
     which then becomes the current model, to render, edit or save. In the window the Scene view shows it."""
     _own_only("arranges scenes in the Scene view")
     colour, material, lo, local = projects.merged(scene)
-    return {"low_corner": [int(v) for v in lo], **editor.load_volume(colour, material, local)}
+    return {"low_corner": [int(v) for v in lo], **editor.load_volume(colour, material, local, projects.doc.project.table)}
 
 
 @mcp.tool()
@@ -372,15 +407,15 @@ def user_state() -> dict:
 
 
 @mcp.tool()
-def user_view(width: int = 640, height: int = 0, samples: int = 64) -> Image:
+def user_view(width: int = 640, height: int = 0, samples: int = 64, look: str = "none") -> Image:
     """Connected only: the model as the user sees it in the Render dock, with their camera and light.
-    height 0 keeps the dock's shape."""
+    height 0 keeps the dock's shape. look: a finish, as for render."""
     if live is None:
         raise ValueError("Not connected to the editor: connect_editor first.")
     view = _do("view_state")
     height = height or max(16, min(1080, round(width / view["aspect"])))
     return Image(data=editor.render_png(width=width, height=height, samples=samples, model=_picture_model(),
-                                        view=view), format="png")
+                                        view=view, look=look), format="png")
 
 
 @mcp.tool()
@@ -415,11 +450,34 @@ def preview() -> Image:
 
 @mcp.tool()
 def render(yaw: float = -25.0, pitch: float = 10.0, width: int = 640, height: int = 640, samples: int = 64,
-           light: str = "Golden hour") -> Image:
+           light: str = "Golden hour", look: str = "none") -> Image:
     """The model in the path tracer, on the wooden table. light is a Light dock preset: "Golden hour"
     (warm, orange), "Day", "Noon", "Overcast" (soft and neutral: best for judging colours) or "Night".
-    yaw 0 looks at the front (from -y). The first call starts the engine (about half a minute)."""
-    return Image(data=editor.render_png(yaw, pitch, width, height, samples, light, _picture_model()), format="png")
+    yaw 0 looks at the front (from -y). The first call starts the engine (about half a minute).
+    look finishes the picture: "none" (as traced: judge colours with it), "film" (tone curve, soft bloom,
+    vignette) or "night" (strong bloom on glows and reds, cool shadows, grain): for final images."""
+    return Image(data=editor.render_png(yaw, pitch, width, height, samples, light, _picture_model(), look=look),
+                 format="png")
+
+
+@mcp.tool()
+def render_file(name: str, width: int = 3840, height: int = 0, samples: int = 512, look: str = "none",
+                yaw: float = -25.0, pitch: float = 10.0, light: str = "Golden hour",
+                users_view: bool = False) -> dict:
+    """A high-resolution render saved as editor/outputs/<name>.png (up to 8192 a side, 4096 samples)
+    instead of handed back: for final and print pictures. Same camera, light and look as render; or
+    users_view (connected): the Render dock's camera and light, as user_view. height 0 keeps the shape:
+    the dock's for users_view, else square. About a minute at 2160 x 2700 and 768 samples. Returns the
+    file's path and size; look at it with Read."""
+    view = None
+    if users_view:
+        if live is None:
+            raise ValueError("users_view needs the editor: connect_editor first.")
+        view = _do("view_state")
+    height = height or (max(16, round(width / view["aspect"])) if view else width)
+    name = name if name.lower().endswith(".png") else f"{name}.png"
+    path = editor.save_render(name, yaw, pitch, width, height, samples, light, _picture_model(), view, look)
+    return {"path": path, "width": width, "height": height, "samples": samples, "look": look}
 
 
 @mcp.tool()

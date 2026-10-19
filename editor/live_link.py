@@ -78,7 +78,8 @@ class SharedEditor(VoxelEditor):
 
     EDITS = ("paint_box", "erase_box", "shape_slice", "set_material_box", "set_material_for_colour",
              "replace_colour", "fill_shape", "draw_line", "set_voxels", "mirror", "copy_box", "protect_box",
-             "clear_protection", "speckle", "noise_terrain", "erode_surface", "scatter", "place_model")
+             "clear_protection", "speckle", "noise_terrain", "erode_surface", "scatter", "place_model",
+             "resize_model", "fit_model", "shift_model", "rotate_model", "flip_model")
     QUESTIONS = ("info", "materials", "read_slice", "voxels_in_box")
 
     def __init__(self, current, locked, window=None):
@@ -92,9 +93,11 @@ class SharedEditor(VoxelEditor):
     def _bind(self) -> None:
         """Follow the window to another model: the assistant's protected boxes and steps were the last one's."""
         model = self._current()
+        if model is self.model:
+            self._follow()  # the user's own resizes, turns and their undo since
         if model is not self.model or self._protected.shape != model.colour.shape:
             self.model = model
-            self._protected = np.zeros(model.colour.shape, dtype=bool)
+            self._unprotect_all()
             self._mine, self._undone = [], []
 
     def _locked(self):
@@ -118,6 +121,7 @@ class SharedEditor(VoxelEditor):
                              "the user can undo it there.")
         self._mine.pop()
         self.model.undo()
+        self._follow()
         self._undone.append(self.model.redo_stack[-1])
         return {"changed": True, **self.info()}
 
@@ -128,13 +132,14 @@ class SharedEditor(VoxelEditor):
             raise ValueError("Nothing of yours to redo.")
         self._undone.pop()
         self.model.redo()
+        self._follow()
         self._mine.append(self.model.undo_stack[-1])
         return {"changed": True, **self.info()}
 
     def forget(self) -> None:
         """The window opened or started another model in the same Model: drop the last one's boxes and steps."""
         with self._lock:
-            self._protected = np.zeros(self.model.colour.shape, dtype=bool)
+            self._unprotect_all()
             self._mine, self._undone = [], []
 
     @synchronized
