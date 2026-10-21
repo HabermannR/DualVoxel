@@ -232,17 +232,35 @@ class RenderView(QtWidgets.QWidget):
         if self.still is not None:
             self._still_step()  # also hidden: the picture was asked for
             return
-        if not self.isVisible():
-            return  # a hidden or closed dock costs no GPU time
         engine = self.engine
+        if engine is None or not self.isVisible():
+            return  # a stopped renderer, or a hidden or closed dock: no GPU time
         model = self.drawn_model()
         if model is not self._drawn:
             self._drawn = model
             self._on_reset()
-        engine.sync(model, self.camera)
-        moving = time.perf_counter() < self.moving_until
-        if engine.frame(self.camera, moving):
+        try:
+            engine.sync(model, self.camera)
+            moving = time.perf_counter() < self.moving_until
+            drawn = engine.frame(self.camera, moving)
+        except Exception as error:  # the first frame makes the GPU device: a GPU it cannot use fails here
+            self._stop_engine(error)
+            return
+        if drawn:
             self._show(engine.rgba)
+
+    def _stop_engine(self, error):
+        """The renderer failed: say why in the dock and stop asking it for frames; the editor goes on."""
+        print(f"Engine view stopped: {error}", file=sys.stderr)
+        self._tick.stop()
+        try:
+            self.engine.close()
+        except Exception:
+            pass
+        self.engine = None
+        self.image = None
+        self.message = f"Renderer unavailable:\n{error}"
+        self.update()
 
     # --- drawing ----------------------------------------------------------------------
     def paintEvent(self, event):

@@ -32,6 +32,8 @@ The Render dock, `render` in the API and the render scripts use a GPU path trace
 
 By default the editor looks for these files in `editor/renderer/`. Without them the editor still works; the Render dock says that the renderer is missing and where it looked.
 
+The renderer sets up the GPU on its first frame. If no GPU qualifies (no Vulkan 1.3, no hardware ray tracing, no Vulkan driver), the Render dock stops and says why, naming each GPU and what it lacks, and `render` in the API raises a `RuntimeError` with the same message. Renderer zips from before 0.2.0 cannot say why; they only report that the renderer failed.
+
 Settings for this machine go in `editor/editor.local.json` (not committed; `editor.local.example.json` is a template):
 
 ```json

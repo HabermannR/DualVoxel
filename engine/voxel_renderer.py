@@ -53,6 +53,10 @@ def material_fields(m: dict) -> list[float]:
 
 
 DLL_NAMES = ("VoxelRenderer.dll", "SpellRenderer.dll")  # the second: builds before the neutral name
+# MSVC's exception code: a C++ exception left a renderer build from before renderer_last_error.
+CPP_EXCEPTION = 0xE06D7363
+REQUIREMENTS = ("The renderer needs a GPU with hardware ray tracing under Vulkan 1.3 (NVIDIA RTX 20 or newer, "
+                "AMD RX 6000 or newer, Intel Arc) and a current graphics driver.")
 
 
 class VoxelRenderer:
@@ -66,6 +70,8 @@ class VoxelRenderer:
         self.dll = ctypes.CDLL(str(dll))
         d = self.dll
         d.render_frame.restype = _I
+        if hasattr(d, "renderer_last_error"):
+            d.renderer_last_error.restype = ctypes.c_char_p
         d.render_frame.argtypes = [ctypes.POINTER(ctypes.c_uint8), _I, _I] + [_F] * 12 + [_B]
         d.renderer_load_asset.argtypes = [_I, ctypes.POINTER(ctypes.c_uint8), _I, _I, _I]
         d.renderer_update_entity.argtypes = [_I, _I, _F, _F, _F, _I]
@@ -182,7 +188,7 @@ class VoxelRenderer:
         self.capture(samples)
         done = 0
         for _ in range(100000):
-            done = self.dll.render_frame(pointer, width, height, *eye, *forward, *right, *up, False)
+            done = self._render_frame(pointer, width, height, *eye, *forward, *right, *up, False)
             if done >= samples:
                 break
         self.capture(0)
@@ -201,9 +207,24 @@ class VoxelRenderer:
         """One live frame into `out` (height x width x 4 uint8): as many samples as fit the renderer's
         frame budget, accumulating while the camera and model stay still. Returns the samples so far."""
         height, width = out.shape[:2]
-        return self.dll.render_frame(out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), width, height,
-                                     *map(float, eye), *map(float, forward), *map(float, right), *map(float, up),
-                                     bool(moving))
+        return self._render_frame(out.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)), width, height,
+                                  *map(float, eye), *map(float, forward), *map(float, right), *map(float, up),
+                                  bool(moving))
+
+    def _render_frame(self, *args) -> int:
+        """render_frame, its failure raised as a RuntimeError with the renderer's own message. The first
+        frame makes the Vulkan device, so a GPU the renderer cannot use fails here, not at load."""
+        try:
+            done = self.dll.render_frame(*args)
+        except OSError as error:
+            if (error.winerror or 0) & 0xFFFFFFFF != CPP_EXCEPTION:
+                raise
+            raise RuntimeError("The renderer failed; this renderer build does not say why (a newer one does). "
+                               + REQUIREMENTS) from None
+        if done < 0:
+            message = self.dll.renderer_last_error().decode("utf-8", "replace")
+            raise RuntimeError(f"{message}\n{REQUIREMENTS}" if "ray tracing" in message else message)
+        return done
 
 
 def load_tables():

@@ -37,7 +37,10 @@ Slices on the left, the 3D edit view in flat colours for drawing, the path-trace
 The editor is Python (PySide6, VTK) and has only been run on Windows so far. The render view needs Windows and a Vulkan GPU with hardware ray tracing:
 
 - **NVIDIA RTX:** the picture is denoised by DLSS Ray Reconstruction, so it is clean while you move.
-- **Other ray-tracing GPUs:** the renderer falls back to an accumulating preview that is noisy while you move and sharpens within seconds once the view is still. This path has not yet been tested on AMD or Intel cards.
+- **Other ray-tracing GPUs** (AMD RX 6000 or newer, Intel Arc): the renderer falls back to an accumulating preview that is noisy while you move and sharpens within seconds once the view is still. This path has not yet been tested on AMD or Intel cards.
+- **No hardware ray tracing** (for example Intel's integrated UHD and Iris Xe graphics): the render view cannot run. The Render dock says which GPU it found and what that GPU lacks; drawing, the edit views and everything else work without it.
+
+If the Render dock shows an error you cannot place, please open an issue with its message and your GPU.
 
 1. Install [uv](https://docs.astral.sh/uv/), then in the `editor` folder run `uv sync`.
 2. Download the renderer zip from the releases and unpack it into `editor/renderer/`.

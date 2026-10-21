@@ -129,6 +129,26 @@ class RenderStillTests(unittest.TestCase):
         self.assertEqual(engine.renderer.captures, [1000, 0])
         self.assertEqual(self.ended, [("", "Picture cancelled.")])
 
+    def test_a_gpu_the_renderer_cannot_use_stops_the_dock_with_its_message(self):
+        class FailingEngine(FakeEngine):
+            closed = False
+
+            def frame(self, camera, moving):  # the first frame makes the Vulkan device
+                raise RuntimeError("No GPU here can run the path tracer")
+
+            def close(self):
+                self.closed = True
+
+        engine = self.view.engine = FailingEngine()
+        self.view.isVisible = lambda: True
+        self.view._tick.start()
+        self.view.tick()
+        self.view.tick()  # one already queued: the message stays
+        self.assertIsNone(self.view.engine)
+        self.assertTrue(engine.closed)
+        self.assertFalse(self.view._tick.isActive())
+        self.assertEqual(self.view.message, "Renderer unavailable:\nNo GPU here can run the path tracer")
+
 
 class WindowTests(unittest.TestCase):
     @classmethod
