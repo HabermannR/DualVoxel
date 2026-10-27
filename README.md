@@ -32,6 +32,10 @@ Slices on the left, the 3D edit view in flat colours for drawing, the path-trace
 
 ![The editor](editor/docs/figures/current_desktop.png)
 
+Gas is a volume that light passes through and scatters in. Below, mist lies between the graves, a fire burns with smoke above it, and a red haze beats around the heart, all lit by their own lanterns and flames at night:
+
+<img src="editor/docs/figures/current_gas.png" width="520" alt="A voxel graveyard at night with mist, a fire and a glowing red haze">
+
 ## Getting started
 
 The editor is Python (PySide6, VTK) and has only been run on Windows so far. The render view needs Windows and a Vulkan GPU with hardware ray tracing:

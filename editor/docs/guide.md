@@ -235,6 +235,10 @@ The **Materials** dock lists the materials by group: rough, glossy, metal, glowi
 
 > **Tip:** rust patches, scratches and worn edges are not textures. Paint them voxel by voxel with materials such as **rust**, **worn metal**, **scratched metal** and **worn leather**.
 
+**Gas** (smoke, steam, mist, glowing gas, flame) is a volume, not a surface: light passes into it and scatters inside, taking the voxel's colour, so mist glows where a lantern shines into it and smoke casts a soft shadow. **density** is how many voxels light travels on average before it scatters (low: thick smoke), **anisotropy** how much it scatters forward (mist and steam glow toward the sun), and **emission** makes it glow all through; the flame also flickers. Solids inside or under gas keep their faces.
+
+<img src="figures/current_gas.png" width="480" alt="Mist, a fire with smoke and a glowing red haze at night">
+
 ### Making your own materials
 
 The listed materials are shared by all models; the editor never changes them. To make one of your own, use **New material…** in the **Material editor** (a tab beside Colours): it starts as a copy of the current material, and it is saved inside this model only.
@@ -316,6 +320,8 @@ Changing the direction or a colour turns the preset into **Custom**.
 
 **Surroundings** sets what the model stands in and on.
 
+<img src="figures/current_render_setup_dock.png" width="480" alt="The Render setup dock">
+
 - **Environment**: *Sun and sky* is the Light dock's. Any HDR environment (an OpenEXR, latitude-longitude; [Poly Haven](https://polyhaven.com/hdris) has hundreds, free under CC0, and the 2K `.exr` is plenty) lights the model from all round instead and shows behind it; the Light dock's sun and sky wait meanwhile. The list holds the `.exr` files of folders of your own, set as `"environments"` in `editor/editor.local.json` (one folder, or a list; `editor/environments` without it); **EXR file…** opens any other. None come with the editor. A bright sun or lamp in the map stays smooth: the renderer aims its light rays where the map is bright.
 - **Strength**: the environment's brightness, 1 as the file has it. Studio maps are bright; 0.3 to 0.6 often looks right.
 - **Turn**: turns the environment about the vertical, to bring its sun or lamps round.
@@ -328,6 +334,8 @@ Below them:
 - **Pause render** (`F9`): stops drawing and frees the GPU, keeping the last picture.
 
 ### The Export dock
+
+<img src="figures/current_export_dock.png" width="480" alt="The Export dock">
 
 Both draw in the Render dock, with its camera, light and setup. The corner counts the samples (and an orbit's frames), the window stays usable, and edits and camera moves wait for the next live picture. While one draws, its button turns into **Cancel picture** or **Cancel video**, which stops it and leaves no file behind. When it is done, the status bar says where it was saved.
 

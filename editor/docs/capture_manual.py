@@ -2,7 +2,8 @@
 
     ..\\.venv\\Scripts\\python.exe capture_manual.py [--scenes]
 
---scenes retakes only the project's figures (scene, scene_render, transform). Shows the window on the desktop (it stays on top while it captures), waits for
+--scenes retakes only the project's figures (scene, scene_render, transform); --gas only the gas
+figure (from assets/heart_cozy.vx2, skipped where that model is not). Shows the window on the desktop (it stays on top while it captures), waits for
 the render to settle and writes `figures/current_*.png`. Each dock is cut from
 one grab of the window, so the VTK views come out as they are on screen. Every
 PNG records 96 dpi per logical pixel. Nothing is saved to the model or the project.
@@ -173,8 +174,34 @@ def main() -> None:
         shoot.dock("Transform", "transform")
         whole_layout()
 
+    def gas():
+        """Gas at night: the cozy heart's mist, smoke, flame and beating haze, lit by its lanterns and fire."""
+        model = ROOT / "assets" / "heart_cozy.vx2"
+        if not model.exists():
+            print("no", model.name, "here: the gas figure stays as it is")
+            return
+        whole_layout()
+        window.open_path(model)
+        wait(800)
+        window.light_panel.choose("Night")
+        focus({"Render"}, 900, 1100)
+        camera = window.render_view.camera
+        window.render_view.engine.reframe(camera)
+        camera.yaw += 0.35  # from the front left, where the fire shows past the grave
+        camera.pitch = 0.42
+        camera.zoom(1.2)
+        window.render_view._moved()
+        settle(window, 1024)
+        shoot.widget(window.render_view, "gas")
+        window.light_panel.choose("Golden hour")
+
     if "--scenes" in sys.argv[1:]:  # only the project's figures
         scenes()
+        window.close()
+        print("done")
+        return
+    if "--gas" in sys.argv[1:]:  # only the gas figure
+        gas()
         window.close()
         print("done")
         return
@@ -213,6 +240,10 @@ def main() -> None:
         shoot.dock("Material editor", shot)
     focus({"Light"}, 640, 600)
     shoot.dock("Light", "light_dock")
+    focus({"Render setup"}, 640, 420)
+    shoot.dock("Render setup", "render_setup_dock")
+    focus({"Export"}, 640, 600)
+    shoot.dock("Export", "export_dock")
     whole_layout()
 
     # the Brush dock, plain and sculpting
@@ -237,6 +268,7 @@ def main() -> None:
     shoot.dock("Materials", "materials")
 
     scenes()
+    gas()
     window.close()
     print("done")
 
