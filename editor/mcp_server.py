@@ -57,6 +57,10 @@ def _own_only(what: str) -> None:
                          "work on a model of the server's own.")
 
 
+def _surroundings(surroundings, strength, rotation, floor):
+    return {"environment": surroundings, "strength": strength, "rotation": rotation, "floor": floor}
+
+
 def _picture_model():
     """The model to draw: a copy of the window's while connected, else None (the server's own)."""
     global live
@@ -137,6 +141,17 @@ def find_colour(hex_value: str, count: int = 5) -> list[dict]:
 def list_materials() -> list[dict]:
     """All materials (id, name, group, whether the engine draws it yet, note), the model's own included."""
     return _do("materials")
+
+
+@mcp.tool()
+def add_material(base: int = 0, name: str = "", fields: dict | None = None) -> dict:
+    """A material of the model's own (ids 128 up, saved in its .vx2): a copy of material `base` named
+    `name`, with `fields` changed: roughness, metal, emission, ior, transmission, density, sss, subsurface,
+    sheen, anisotropy, group ("gas" makes a volume), light (fire, pulse, flash, sickly, unnatural, arcane or
+    "") and note. E.g. a beating red haze: base 37 (glowing gas), {"light": "pulse", "emission": 1.5}.
+    Returns its id; paint with it like any material."""
+    _own_only("adds materials (Materials dock: New material…)")
+    return editor.add_material(base, name, fields)
 
 
 @mcp.tool()
@@ -288,6 +303,18 @@ def scatter(start: list[int], end: list[int], options: list[dict], density: floa
     [{"weight": 3, "stack": [153, 153, 127], "material": 16, "random_height": true}, {"weight": 1, "stack": [251]}],
     stacks from the bottom, an entry may be [colour, material]; random_height keeps the tip, drops some below."""
     return _do("scatter", start=start, end=end, options=options, density=density, on_colours=on_colours, seed=seed)
+
+
+@mcp.tool()
+def cloud(start: list[int], end: list[int], colours: list[list[float]], shape: str = "ellipsoid",
+          coverage: float = 0.6, scale: float = 4, softness: float = 0.5, seed: int = 0) -> dict:
+    """A soft, uneven body in the empty cells of a box, never over a solid: gas puffs, mist banks, smoke
+    (with a gas material: smoke 34, steam 35, mist 36, glowing gas 37, flame 38), leafy crowns. shape
+    "ellipsoid" (the one the box holds) or "box"; coverage: the share of the shape's cells it takes; scale:
+    its lumps in voxels (0: single scattered voxels, as fireflies or sparks); softness 0-1 thins it toward
+    the edge. colours: [[colour, weight, material], ...] as in speckle (a material 0 when left out)."""
+    return _do("cloud", start=start, end=end, colours=_palette(colours), shape=shape, coverage=coverage,
+               scale=scale, softness=softness, seed=seed)
 
 
 @mcp.tool()
@@ -450,20 +477,27 @@ def preview() -> Image:
 
 @mcp.tool()
 def render(yaw: float = -25.0, pitch: float = 10.0, width: int = 640, height: int = 640, samples: int = 64,
-           light: str = "Golden hour", look: str = "none") -> Image:
+           light: str = "Golden hour", look: str = "none", surroundings: str = "sky",
+           surroundings_strength: float = 1.0, surroundings_rotation: float = 0.0, floor: str = "wood") -> Image:
     """The model in the path tracer, on the wooden table. light is a Light dock preset: "Golden hour"
     (warm, orange), "Day", "Noon", "Overcast" (soft and neutral: best for judging colours) or "Night".
     yaw 0 looks at the front (from -y). The first call starts the engine (about half a minute).
     look finishes the picture: "none" (as traced: judge colours with it), "film" (tone curve, soft bloom,
-    vignette) or "night" (strong bloom on glows and reds, cool shadows, grain): for final images."""
-    return Image(data=editor.render_png(yaw, pitch, width, height, samples, light, _picture_model(), look=look),
+    vignette) or "night" (strong bloom on glows and reds, cool shadows, grain): for final images.
+    surroundings: "sky" (the light's own sun and sky) or an HDR environment that lights the model
+    instead: a path to an .exr, or the name of one in the environments folder (editor.local.json); surroundings_strength and surroundings_rotation (degrees)
+    for an environment. floor: "wood" (the table), "matte", "mirror", "polished metal", "cloth" or "none"."""
+    return Image(data=editor.render_png(yaw, pitch, width, height, samples, light, _picture_model(), look=look,
+                                        surroundings=_surroundings(surroundings, surroundings_strength,
+                                                                   surroundings_rotation, floor)),
                  format="png")
 
 
 @mcp.tool()
 def render_file(name: str, width: int = 3840, height: int = 0, samples: int = 512, look: str = "none",
                 yaw: float = -25.0, pitch: float = 10.0, light: str = "Golden hour",
-                users_view: bool = False) -> dict:
+                users_view: bool = False, surroundings: str = "sky", surroundings_strength: float = 1.0,
+                surroundings_rotation: float = 0.0, floor: str = "wood") -> dict:
     """A high-resolution render saved as editor/outputs/<name>.png (up to 8192 a side, 4096 samples)
     instead of handed back: for final and print pictures. Same camera, light and look as render; or
     users_view (connected): the Render dock's camera and light, as user_view. height 0 keeps the shape:
@@ -476,8 +510,26 @@ def render_file(name: str, width: int = 3840, height: int = 0, samples: int = 51
         view = _do("view_state")
     height = height or (max(16, round(width / view["aspect"])) if view else width)
     name = name if name.lower().endswith(".png") else f"{name}.png"
-    path = editor.save_render(name, yaw, pitch, width, height, samples, light, _picture_model(), view, look)
+    path = editor.save_render(name, yaw, pitch, width, height, samples, light, _picture_model(), view, look,
+                              _surroundings(surroundings, surroundings_strength, surroundings_rotation, floor))
     return {"path": path, "width": width, "height": height, "samples": samples, "look": look}
+
+
+@mcp.tool()
+def render_orbit(name: str, frames: int = 300, fps: float = 30, degrees: float = 360, swing: bool = False,
+                 yaw: float = -25.0, pitch: float = 20.0, width: int = 720, height: int = 720, samples: int = 128,
+                 light: str = "Golden hour", look: str = "none", surroundings: str = "sky",
+                 surroundings_strength: float = 1.0, surroundings_rotation: float = 0.0, floor: str = "wood") -> dict:
+    """An orbit animation saved as editor/outputs/<name> (.mp4 needs ffmpeg; .gif or .webp always work):
+    the camera turns about the model by `degrees` from the view at yaw and pitch: 360 goes round from
+    there, a smaller angle sweeps an arc centred there; swing goes out to both ends and back, eased, so any
+    angle loops. `frames` frames at `fps` (more frames for the same angle: a slower camera; 300 at 30 is
+    10 s), each a still of `samples` per pixel, light and look as in
+    render. Flames and the other magic lights move with the frames. A frame takes as long as a picture
+    of its size: about 2 s at 720 x 900 and 128 samples with gas at night, so mind long ones."""
+    return editor.save_orbit(name, frames, fps, degrees, swing, yaw, pitch, width, height, samples, light,
+                             _picture_model(), look,
+                             _surroundings(surroundings, surroundings_strength, surroundings_rotation, floor))
 
 
 @mcp.tool()

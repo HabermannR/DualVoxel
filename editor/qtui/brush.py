@@ -48,6 +48,16 @@ def mode_for(tool: str, shift: bool = False, ctrl: bool = False, alt: bool = Fal
     return tool
 
 
+def size_step(event) -> int:
+    """Alt + Shift + the wheel: +1 or -1 for the brush size (0 for any other wheel). Qt turns the wheel
+    sideways while Alt is held, so either direction counts."""
+    Mod = QtCore.Qt.KeyboardModifier
+    if (event.modifiers() & (Mod.AltModifier | Mod.ShiftModifier)) != (Mod.AltModifier | Mod.ShiftModifier):
+        return 0
+    delta = event.angleDelta().y() or event.angleDelta().x()
+    return (delta > 0) - (delta < 0)
+
+
 def held_mode(tool: str, modifiers) -> str:
     """mode_for with Qt's keyboard modifiers."""
     Mod = QtCore.Qt.KeyboardModifier
@@ -126,9 +136,12 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
     face's outward normal (a slice: its viewing axis); hit: the solid voxel clicked (None on the floor or an
     empty cell); box_start: (voxel, normal) where a box drag began; in_slice: a slice, where the face brush
     fills the connected area of the clicked cell's colour in its layer and a stamp is a 3D-view brush.
-    protect / unprotect: the solid voxels the brush covers, as paint would (the colours are not used)."""
+    protect / unprotect: the solid voxels the brush covers, as paint would (the colours are not used).
+    Painting writes what doc.paints says: the colour and the material, or one of them, the other staying
+    as each voxel has it."""
     if tool == "pick" or target is None and hit is None:
         return None
+    paints = getattr(doc, "paints", "both") if tool == "paint" else "both"
     if tool in ("protect", "unprotect"):
         if brush.kind not in PROTECT_KINDS:
             brush = _as_voxel(brush)
@@ -190,4 +203,11 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
         colours = np.zeros_like(colours)
     if not keep.any():
         return None
-    return points[keep], colours[keep], materials[keep]
+    points, colours, materials = points[keep], colours[keep], materials[keep]
+    if paints != "both":  # one byte painted, the other kept
+        x, y, z = points.T
+        if paints == "colour":
+            materials = doc.model.material[z, y, x].copy()
+        else:
+            colours = doc.model.colour[z, y, x].copy()
+    return points, colours, materials

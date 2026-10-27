@@ -21,11 +21,14 @@ from PySide6 import QtCore
 from core.model import Model, transform_plane
 from material_source import send_tables  # palette/, on the path through core.model
 
+# What painting changes (Document.paints): the colour and the material, only the colour, only the material.
+PAINTS = ("both", "colour", "material")
+
 # The edit views' material key: a colour per group (as the Dear PyGui editor's corner marks),
 # lighter for later materials in the group, so each material is told apart.
 GROUP_COLOUR = {"rough": (200, 192, 180), "glossy": (235, 235, 240), "metal": (120, 160, 220),
                 "emissive": (255, 210, 40), "transparent": (70, 215, 255), "subsurface": (255, 120, 160),
-                "special": (190, 80, 255)}
+                "special": (190, 80, 255), "gas": (120, 235, 160)}
 
 
 def material_colours(materials) -> np.ndarray:
@@ -79,6 +82,7 @@ class Document(QtCore.QObject):
         self.material = 0
         self.tool = "attach"
         self.show_materials = False  # the edit views colour voxels by material instead of colour
+        self.paints = "both"  # what painting changes: PAINTS
         self.shift_wrap = True  # a shift brings what leaves one side in at the other (the Model dock's Wrap)
         self.picked = None  # the voxel last picked (Alt + left, or the Pick mode)
         self.material_rgb = material_colours(self.model.all_materials())
@@ -145,6 +149,17 @@ class Document(QtCore.QObject):
     def set_tool(self, tool: str) -> None:
         if tool in TOOLS and tool != self.tool:
             self.tool = tool
+            self.current_changed.emit()
+
+    def set_paints(self, paints: str) -> None:
+        """What painting changes: the colour and the material, only the colour, or only the material
+        (the edit views then show materials, to see it)."""
+        if paints not in PAINTS:
+            raise ValueError(f"paints: {', '.join(PAINTS)}")
+        if paints != self.paints:
+            self.paints = paints
+            if paints == "material":
+                self.set_show_materials(True)
             self.current_changed.emit()
 
     def set_show_materials(self, show: bool) -> None:

@@ -112,7 +112,8 @@ class AssistantLink(QtCore.QObject):
         camera = view.camera
         return {"eye": camera.pos.tolist(), "forward": camera.fwd.tolist(), "right": camera.right.tolist(),
                 "up": camera.up.tolist(), "aspect": view.width() / max(1, view.height()),
-                "light": {"golden": view.golden, "custom": view.custom_light, "sun": view.sun, "sky": view.sky}}
+                "light": {"golden": view.golden, "custom": view.custom_light, "sun": view.sun, "sky": view.sky,
+                          "surroundings": dict(view.surroundings)}}
 
     def _project_doc(self):
         if self.project is None:

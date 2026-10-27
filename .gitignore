@@ -5,6 +5,8 @@ __pycache__/
 # This machine's own settings and the renderer's binary files
 editor/editor.local.json
 editor/renderer/
+# HDR environments of one's own (big, and not ours to publish)
+editor/environments/
 
 # Pictures from the API and the command line; models saved as .vox
 editor/outputs/

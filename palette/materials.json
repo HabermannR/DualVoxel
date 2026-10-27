@@ -13,6 +13,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "the default (kind 0)",
    "light": ""
@@ -30,6 +31,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "draws as matte (above roughness 0.85)",
    "light": ""
@@ -47,6 +49,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "draws as matte",
    "light": ""
@@ -64,6 +67,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "soft sheen: cloth, dry wood (kind 7)",
    "light": ""
@@ -81,6 +85,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "varnish, wet stone, glazed pottery (kind 7)",
    "light": ""
@@ -98,6 +103,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "lacquer, polished stone (kind 7)",
    "light": ""
@@ -115,6 +121,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "iron, armour (kind 8)",
    "light": ""
@@ -132,6 +139,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "goblin axe, gold trim (kind 8)",
    "light": ""
@@ -149,6 +157,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "chrome: a perfect mirror tinted by the colour (kind 1)",
    "light": ""
@@ -166,6 +175,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "embers, runes, mushrooms (kind 9)",
    "light": ""
@@ -183,6 +193,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "eyes, gems (kind 9)",
    "light": ""
@@ -200,6 +211,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "a light source that lights its surroundings (kind 9)",
    "light": ""
@@ -217,6 +229,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "partly",
    "note": "the river's glossy opaque water (kind 3)",
    "light": ""
@@ -234,6 +247,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "coloured by its voxel colour: bottle glass, ruby, amber (kind 10)",
    "light": ""
@@ -251,6 +265,7 @@
    "sss": 1.5,
    "subsurface": 1,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "partly",
    "note": "translucent, scattering light inside (kind 6); no gloss",
    "light": ""
@@ -268,6 +283,7 @@
    "sss": 0.8,
    "subsurface": 1,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "skin, wax, flesh (kind 6)",
    "light": ""
@@ -285,6 +301,7 @@
    "sss": 0.4,
    "subsurface": 1,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "partly",
    "note": "subsurface (kind 6); thin sheets not modelled",
    "light": ""
@@ -302,6 +319,7 @@
    "sss": 2.5,
    "subsurface": 1,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "partly",
    "note": "subsurface (kind 6): light travels 2.5 voxels deep; no gloss",
    "light": ""
@@ -319,6 +337,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "the alchemist's gem, wandering emission lobes (kind 4, energy_light.glsl)",
    "light": ""
@@ -336,6 +355,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "cured leather: a soft, low sheen (kind 7)",
    "light": ""
@@ -353,6 +373,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "scuffed leather; paint it on edges and creases (kind 7)",
    "light": ""
@@ -370,6 +391,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "corrosion, not metal: rust colours on these voxels, scattered into worn metal (matte)",
    "light": ""
@@ -387,6 +409,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "scuffed iron, old tools, dull gold (kind 8)",
    "light": ""
@@ -404,6 +427,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "a blurred metal; paint lines of polished metal into it for scratches (kind 8)",
    "light": ""
@@ -421,6 +445,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "handles, tabletops, staffs (kind 7)",
    "light": ""
@@ -438,6 +463,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "puddles, wet stone, slime (kind 7)",
    "light": ""
@@ -455,6 +481,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "plastic, enamel, painted toys (kind 7)",
    "light": ""
@@ -472,6 +499,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "milky coloured glass, sea glass, quartz (kind 10)",
    "light": ""
@@ -489,6 +517,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "flickering flames, rising voxel by voxel, yellower when brighter: torches, braziers",
    "light": "fire"
@@ -506,6 +535,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "slow, even breathing: runes at rest, sleeping crystals",
    "light": "pulse"
@@ -523,6 +553,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "dim, then white-hot flashes at uneven beats: lightning, a spell going off",
    "light": "flash"
@@ -540,6 +571,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "a weak, uneven throb with gasping dips, pulled to bile green: rot, poison, plague",
    "light": "sickly"
@@ -557,6 +589,7 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "the hue drifts through every colour, voxel by voxel: wrong, otherworldly magic",
    "light": "unnatural"
@@ -574,9 +607,100 @@
    "sss": 0,
    "subsurface": 0,
    "sheen": 0,
+   "anisotropy": 0,
    "engine": "yes",
    "note": "bands of light rising through the voxels: charged runes, spell circles",
    "light": "arcane"
+  },
+  {
+   "id": 34,
+   "name": "smoke",
+   "group": "gas",
+   "roughness": 1.0,
+   "metal": 0,
+   "emission": 0,
+   "ior": 1.0,
+   "transmission": 0,
+   "density": 4,
+   "sss": 0,
+   "subsurface": 0,
+   "sheen": 0,
+   "anisotropy": 0.3,
+   "engine": "yes",
+   "note": "a volume, not a surface: grey or black smoke, dust clouds; light scatters once per 4 voxels",
+   "light": ""
+  },
+  {
+   "id": 35,
+   "name": "steam",
+   "group": "gas",
+   "roughness": 1.0,
+   "metal": 0,
+   "emission": 0,
+   "ior": 1.0,
+   "transmission": 0,
+   "density": 2,
+   "sss": 0,
+   "subsurface": 0,
+   "sheen": 0,
+   "anisotropy": 0.7,
+   "engine": "yes",
+   "note": "white steam and clouds, brightest toward the sun",
+   "light": ""
+  },
+  {
+   "id": 36,
+   "name": "mist",
+   "group": "gas",
+   "roughness": 1.0,
+   "metal": 0,
+   "emission": 0,
+   "ior": 1.0,
+   "transmission": 0,
+   "density": 16,
+   "sss": 0,
+   "subsurface": 0,
+   "sheen": 0,
+   "anisotropy": 0.6,
+   "engine": "yes",
+   "note": "thin haze and ground fog: a wide, low layer the scene shows through",
+   "light": ""
+  },
+  {
+   "id": 37,
+   "name": "glowing gas",
+   "group": "gas",
+   "roughness": 1.0,
+   "metal": 0,
+   "emission": 1,
+   "ior": 1.0,
+   "transmission": 0,
+   "density": 6,
+   "sss": 0,
+   "subsurface": 0,
+   "sheen": 0,
+   "anisotropy": 0,
+   "engine": "yes",
+   "note": "poison clouds, magic vapour: glows in its colour all through and lights what is near",
+   "light": ""
+  },
+  {
+   "id": 38,
+   "name": "flame",
+   "group": "gas",
+   "roughness": 1.0,
+   "metal": 0,
+   "emission": 3,
+   "ior": 1.0,
+   "transmission": 0,
+   "density": 3,
+   "sss": 0,
+   "subsurface": 0,
+   "sheen": 0,
+   "anisotropy": 0.2,
+   "engine": "yes",
+   "note": "flames as a glowing gas, flickering and rising: torches, braziers; smoke above them",
+   "light": "fire"
   }
  ]
 }

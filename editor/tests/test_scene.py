@@ -608,6 +608,58 @@ class QtSceneTests(unittest.TestCase):
         from PySide6.QtTest import QTest
         QTest.keyClick(view.plotter.interactor, QtCore.Qt.Key.Key_BracketRight)
         self.assertEqual((brush.size, panel.size_box.value()), (2, 2))
+
+        # and so does Alt + Shift + the wheel (sideways too: Qt turns it while Alt is held), in the slices too;
+        # the plain wheel keeps zooming, and moving the layer
+        from PySide6 import QtGui, QtWidgets
+        Mod = QtCore.Qt.KeyboardModifier
+
+        def wheel(widget, dy, modifiers, dx=0):
+            centre = QtCore.QPointF(widget.width() / 2, widget.height() / 2)
+            QtWidgets.QApplication.sendEvent(widget, QtGui.QWheelEvent(
+                centre, widget.mapToGlobal(centre), QtCore.QPoint(), QtCore.QPoint(dx, dy),
+                QtCore.Qt.MouseButton.NoButton, modifiers, QtCore.Qt.ScrollPhase.NoScrollPhase, False))
+        both = Mod.AltModifier | Mod.ShiftModifier
+        wheel(view.plotter.interactor, 120, both)
+        wheel(view.plotter.interactor, 0, both, dx=120)
+        self.assertEqual((brush.size, panel.size_box.value()), (4, 4))
+        wheel(view.plotter.interactor, -120, both)
+        wheel(view.plotter.interactor, 120, Mod.NoModifier)  # zooms
+        self.assertEqual(brush.size, 3)
+        top = window.slices["Top"]
+        depth = top.depth_box.value()
+        wheel(top.canvas, -120, both)
+        self.assertEqual((brush.size, top.depth_box.value()), (2, depth))
+        window.close()
+
+    def test_painting_colour_material_or_both(self):
+        window = self._window()
+        doc, brush, panel, top = window.doc, window.edit_view.brush, window.brush_panel, window.slices["Top"]
+        doc.new(8, 8, 4, ground=1)  # one layer of the current colour, matte
+        top.depth_box.setValue(0)
+        base_colour = int(doc.model.colour[0, 0, 0])
+        brush.set(kind="voxel", size=1, volume=False)
+        doc.set_colour(7)
+        doc.set_material(4)
+
+        panel.paint_buttons["colour"].click()  # recolours, the material stays
+        self.assertEqual(doc.paints, "colour")
+        top.draw([(1, 1)], "paint")
+        self.assertEqual((doc.voxel(1, 1, 0), int(doc.model.material[0, 1, 1])), (7, 0))
+
+        panel.paint_buttons["material"].click()  # the material, the colour stays; the views show materials
+        self.assertTrue(doc.show_materials)
+        top.draw([(2, 2)], "paint")
+        self.assertEqual((doc.voxel(2, 2, 0), int(doc.model.material[0, 2, 2])), (base_colour, 4))
+
+        panel.paint_buttons["both"].click()
+        top.draw([(3, 3)], "paint")
+        self.assertEqual((doc.voxel(3, 3, 0), int(doc.model.material[0, 3, 3])), (7, 4))
+        doc.set_paints("colour")  # attach always adds both
+        self.assertTrue(panel.paint_buttons["colour"].isChecked())
+        top.depth_box.setValue(1)
+        top.draw([(5, 5)], "attach")
+        self.assertEqual((doc.voxel(5, 5, 1), int(doc.model.material[1, 5, 5])), (7, 4))
         window.close()
 
     def test_the_slices_draw_with_the_brush_and_the_sculpt_brushes(self):
@@ -636,6 +688,19 @@ class QtSceneTests(unittest.TestCase):
         self.assertEqual(brush.kind, "grow")
         self.assertFalse(panel.kind_buttons["face"].isChecked())
         self.assertEqual(panel.options.currentIndex(), 0)
+        # a sculpting brush ignores the mode, so no mode shows as chosen; a mode goes back to the brush before
+        self.assertFalse(any(button.isChecked() for button in panel.mode_buttons.values()))
+        self.assertEqual(panel.mouse_label.text(), "Left: grow · Shift: erode · Alt: pick")
+        panel.mode_buttons["erase"].click()
+        self.assertEqual((doc.tool, brush.kind), ("erase", "face"))
+        self.assertTrue(panel.mode_buttons["erase"].isChecked())
+        panel.kind_buttons["smooth"].click()
+        doc.set_tool("attach")  # a mode's key does the same
+        self.assertEqual(brush.kind, "face")
+        self.assertTrue(panel.mode_buttons["attach"].isChecked())
+        panel.mode_buttons["pick"].click()
+        panel.kind_buttons["grow"].click()  # in pick mode a sculpting brush would do nothing: attach underneath
+        self.assertEqual((doc.tool, brush.kind), ("attach", "grow"))
         # grow adds the voxels beside the square inside a 5-square, in its colour; Shift erodes instead
         brush.set(size=5)
         top.draw([(10, 10)], "attach")

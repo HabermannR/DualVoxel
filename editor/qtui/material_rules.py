@@ -9,7 +9,9 @@ subsurface takes its share of what remains (sss sets how deep it scatters),
 sheen softens the base, emission adds light. Only a few cases do not read a
 field: the fixed water, staff field and mirror; a full metal's ior; density
 without transmission; sss without subsurface. A plain matte material (rough,
-nothing else) is drawn by the fast matte path, the same picture. Keep this in
+nothing else) is drawn by the fast matte path, the same picture. Gas (group
+"gas", kind 8) is a volume instead: it reads only density, anisotropy, emission
+and its light. Keep this in
 step with those functions; palette/build_field_sweep.py renders every field.
 """
 from __future__ import annotations
@@ -26,9 +28,9 @@ MAX_EMISSION = 32.0  # voxel_material() clamps emission to this
 MATTE_LIMIT = 0.85   # from this roughness up a non-metal no longer reflects (plain matte)
 
 USED, SWITCH, IGNORED = "used", "switch", "ignored"
-FIELDS = ("roughness", "metal", "emission", "transmission", "density", "subsurface", "sss", "sheen", "ior")
+FIELDS = ("roughness", "metal", "emission", "transmission", "density", "subsurface", "sss", "sheen", "ior", "anisotropy")
 FIXED_STYLES = {2: "staff field (kind 4)", 3: "water (kind 3)", 6: "mirror metal (kind 1)"}
-DEFAULTS = {"density": 4, "subsurface": 0, "sheen": 0}
+DEFAULTS = {"density": 4, "subsurface": 0, "sheen": 0, "anisotropy": 0}
 
 
 def value(m: dict, field: str) -> float:
@@ -43,6 +45,14 @@ def reading(m: dict) -> tuple[str, dict[str, tuple[str, str]]]:
                3: "water is a fixed effect, chosen by the name",
                6: "a fixed mirror, chosen by the name"}[style]
         return FIXED_STYLES[style], {f: (IGNORED, why) for f in FIELDS}
+    if m.get("group") == "gas":
+        fields = {f: (IGNORED, "gas is a volume, not a surface") for f in FIELDS}
+        fields["density"] = (USED, "the voxels light travels on average before it scatters: low is thick smoke")
+        fields["anisotropy"] = (USED, "where scattered light goes: above 0 on forward (glows toward the sun), below 0 back")
+        fields["emission"] = (USED, f"light given all through the gas in its colour (up to {MAX_EMISSION:g})")
+        if m.get("light"):
+            fields["emission"] = (USED, f"the strength of the '{m['light']}' light's moving glow through the gas")
+        return "gas (kind 8): " + ("glowing " if value(m, "emission") > 0 else "") + "scattering volume", fields
     rough, metal, transmission = value(m, "roughness"), value(m, "metal"), value(m, "transmission")
     fields = {
         "roughness": (USED, f"the blur of every reflection; from {MATTE_LIMIT} up a non-metal no longer reflects"),
@@ -54,6 +64,7 @@ def reading(m: dict) -> tuple[str, dict[str, tuple[str, str]]]:
         "sss": (USED, "how deep the subsurface light travels: the mean free path in voxels"),
         "sheen": (USED, "a soft brightening where light grazes or comes from behind: cloth, moss, dust"),
         "ior": (USED, "the non-metal reflection (1.5: 4 % head-on, 1.33: 2 %) and the refraction of glass"),
+        "anisotropy": (IGNORED, "read by gas only (group gas)"),
     }
     if m.get("light"):
         fields["emission"] = (USED, f"the strength of the '{m['light']}' light's moving glow (up to {MAX_EMISSION:g})")

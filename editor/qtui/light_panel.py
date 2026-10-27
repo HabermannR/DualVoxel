@@ -1,14 +1,15 @@
-"""The Light dock: the render's sun and sky, from presets or set freely, and its tilt-shift blur.
+"""The Light dock: the render's sun and sky, from presets or set freely.
 
 The window calls `install_light_panel(window)` once, after the Brush dock; the
-Light dock is a tab beside it. A preset is a starting point: Golden hour and
-Day are the renderer's built-in light, Noon, Overcast and Night are custom lights. Moving any control makes
-the light custom (renderer_set_light): the sun's direction (azimuth around, 0°
-along +x, 90° along +y; elevation above the table) and colour, the sky's horizon
-and zenith colours and the backdrop's top and bottom (what the camera sees past
+Light dock is a tab beside it, with Render setup and Export
+(render_setup_panel.py, export_panel.py) beside it in turn. A preset is a
+starting point: Golden hour and Day are the renderer's built-in light, Noon,
+Overcast and Night are custom lights. Moving any control makes the light
+custom (renderer_set_light): the sun's direction (azimuth around, 0° along +x,
+90° along +y; elevation above the table) and colour, the sky's horizon and
+zenith colours and the backdrop's top and bottom (what the camera sees past
 the table). Sun and Sky then scale the sun's and the sky's strength (1 each as
-set, 0 none). Tilt blur switches the tilt-shift band; Pause (or F9) stops
-the render and frees the GPU. Only the picture changes, never the model.
+set, 0 none). Only the picture changes, never the model.
 """
 from __future__ import annotations
 
@@ -77,9 +78,8 @@ class ColourButton(QtWidgets.QPushButton):
             self.changed.emit()
 
 
-class LightPanel(QtWidgets.QWidget):
-    picture_requested = QtCore.Signal()  # Render picture… (the window asks for size, samples, finish, file)
 
+class LightPanel(QtWidgets.QWidget):
     def __init__(self, render_view):
         super().__init__()
         self.render_view = render_view
@@ -143,26 +143,8 @@ class LightPanel(QtWidgets.QWidget):
         buttons.addWidget(night)
         buttons.addStretch(1)
         layout.addLayout(buttons)
-        render_row = QtWidgets.QHBoxLayout()
-        self.blur_box = QtWidgets.QCheckBox("Tilt blur")
-        self.blur_box.setToolTip("The tilt-shift blur above and below the model's band; off shows it sharp")
-        self.blur_box.setChecked(render_view.tilt_blur)
-        self.blur_box.toggled.connect(render_view.set_tilt_blur)
-        self.pause_button = QtWidgets.QPushButton("Pause render", checkable=True)
-        self.pause_button.setToolTip("Stop drawing and free the GPU; the last picture stays (F9)")
-        self.pause_button.toggled.connect(render_view.set_paused)
-        render_view.paused_changed.connect(self._show_paused)
-        self.picture_button = QtWidgets.QPushButton("Render picture…")
-        self.picture_button.setToolTip("A high-resolution picture of the Render dock's view, saved as a PNG "
-                                       "(File > Render picture…)")
-        self.picture_button.clicked.connect(self._picture_clicked)
-        render_view.still_changed.connect(self._show_still)
-        render_row.addWidget(self.blur_box)
-        render_row.addStretch(1)
-        render_row.addWidget(self.picture_button)
-        render_row.addWidget(self.pause_button)
-        layout.addLayout(render_row)
-        hint = QtWidgets.QLabel("Live in the Render dock; the model's files are not touched.")
+        hint = QtWidgets.QLabel("Live in the Render dock; the model's files are not touched. An HDR environment "
+                                "(Render setup) lights the model in place of this sun and sky.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888")
         layout.addWidget(hint)
@@ -223,18 +205,3 @@ class LightPanel(QtWidgets.QWidget):
             widget.blockSignals(True)
             widget.setValue(shown)
             widget.blockSignals(False)
-
-    def _picture_clicked(self) -> None:
-        if self.render_view.still is not None:
-            self.render_view.cancel_still()
-        else:
-            self.picture_requested.emit()
-
-    def _show_still(self, rendering: bool) -> None:
-        self.picture_button.setText("Cancel picture" if rendering else "Render picture…")
-
-    def _show_paused(self, paused: bool) -> None:
-        self.pause_button.blockSignals(True)
-        self.pause_button.setChecked(paused)
-        self.pause_button.blockSignals(False)
-        self.pause_button.setText("Resume render" if paused else "Pause render")

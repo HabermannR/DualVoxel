@@ -6,7 +6,7 @@ in the path tracer.
 The mouse, as in MagicaVoxel: a left click or drag applies the brush (qtui/brush.py,
 set in the Brush dock) in the current mode; Shift + left and Ctrl + left use the
 other two modes (brush.mode_for), Alt + left picks. Right drag orbits, middle
-drag pans, the wheel zooms. Attach adds voxels against the clicked face (or on the floor) and only
+drag pans, the wheel zooms (Alt + Shift + wheel: the brush size). Attach adds voxels against the clicked face (or on the floor) and only
 fills empty ones, paint recolours solid voxels, erase removes them, pick takes a
 voxel's colour and material, protect marks voxels the assistant may not change
 (tinted violet; Shift lifts it). Brushes: voxel (size, square or circle, flat or a
@@ -35,11 +35,13 @@ from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker, vtkPolyDataMapper
 
 from core.scene import IDENTITY
-from qtui.brush import DRAGGED, Brush, brush_edit, held_mode, mode_for
+from qtui.brush import DRAGGED, SCULPT, SWAPPED_SCULPT, Brush, brush_edit, held_mode, mode_for, size_step
 from qtui.document import PROTECT_MODES
 
 HOVER_COLOUR = {"attach": (0.3, 1.0, 0.4), "paint": (1.0, 0.85, 0.1), "erase": (1.0, 0.3, 0.3),
-                "pick": (0.4, 0.8, 1.0), "protect": (0.75, 0.45, 1.0), "unprotect": (0.6, 0.6, 0.65)}
+                "pick": (0.4, 0.8, 1.0), "protect": (0.75, 0.45, 1.0), "unprotect": (0.6, 0.6, 0.65),
+                # the sculpting brushes, which ignore the mode: grow adds as attach, erode takes off as erase
+                "grow": (0.3, 1.0, 0.4), "erode": (1.0, 0.3, 0.3), "smooth": (0.92, 0.92, 1.0)}
 PROTECTED_RGB = np.array([150, 80, 255], dtype=np.float32)  # protected voxels lean towards this
 PROTECTED_TINT = 0.45
 CLICK_SLOP = 4  # pixels a press may move and still count as a click
@@ -181,8 +183,9 @@ class EditStyle(vtkInteractorStyleTrackballCamera):
             return  # no drawing while the right button orbits
         iren = self.GetInteractor()
         self.stroking = True
-        mode = mode_for(self.view.doc.tool, bool(iren.GetShiftKey()), bool(iren.GetControlKey()),
-                        bool(iren.GetAltKey()))
+        # Alt from Qt: VTK's Qt widget passes Shift and Ctrl to VTK but never Alt, so Alt + left drew
+        alt = bool(QtWidgets.QApplication.queryKeyboardModifiers() & QtCore.Qt.KeyboardModifier.AltModifier)
+        mode = mode_for(self.view.doc.tool, bool(iren.GetShiftKey()), bool(iren.GetControlKey()), alt)
         self.view.begin_stroke(iren.GetEventPosition(), mode)
 
     def move(self, *_):
@@ -253,7 +256,7 @@ class EditView(QtWidgets.QWidget):
         hint = QtWidgets.QLabel("Left: mode · Shift/Ctrl: the others · Alt: pick · right: orbit · middle: pan")
         hint.setToolTip("Left click or drag: the brush in the current mode · Shift + left and Ctrl + left: the "
                         "other two modes (the Brush dock shows which) · Alt + left: pick colour and material · "
-                        "right drag: orbit · middle drag: pan · wheel: zoom · [ and ]: brush size · R: turn the "
+                        "right drag: orbit · middle drag: pan · wheel: zoom · [ and ], Alt + Shift + wheel: brush size · R: turn the "
                         "stamp · Esc: stop stamping · arrows, Page Up / Down: shift the model in its box as seen "
                         f"(Shift: {BIG_STEP} voxels)")
         hint.setStyleSheet("color: #999")
@@ -600,7 +603,11 @@ class EditView(QtWidgets.QWidget):
         x, y, z = (points - lo).T
         stamp = self.brush.kind == "stamp" and mode not in ("erase", *PROTECT_MODES)
         grid[z, y, x] = colours if stamp else 1
-        rgb = self.doc.rgb if stamp else np.array([[0, 0, 0]] + [np.multiply(HOVER_COLOUR[mode], 255)] * 255,
+        shown = mode
+        if self.brush.kind in SCULPT and mode not in PROTECT_MODES:  # what the sculpting brush does, Shift held
+            shift = QtWidgets.QApplication.queryKeyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+            shown = SWAPPED_SCULPT.get(self.brush.kind, self.brush.kind) if shift else self.brush.kind
+        rgb = self.doc.rgb if stamp else np.array([[0, 0, 0]] + [np.multiply(HOVER_COLOUR[shown], 255)] * 255,
                                                   dtype=np.uint8)
         faces = voxel_faces(grid, rgb)
         if faces is None:
@@ -610,7 +617,14 @@ class EditView(QtWidgets.QWidget):
         mesh.cell_data["rgb"] = face_rgb
         self.preview_actor = self.plotter.add_mesh(
             mesh, scalars="rgb", rgb=True, opacity=PREVIEW_OPACITY, show_edges=True,
-            edge_color=HOVER_COLOUR[mode], line_width=1, pickable=False, reset_camera=False, render=True)
+            edge_color=HOVER_COLOUR[shown], line_width=1, pickable=False, reset_camera=False, render=False)
+        # a paint or erase preview lies exactly on the model's faces: drawn in front of them, else the
+        # depth test lets the model win on some faces (a paint preview's top went missing)
+        mapper = self.preview_actor.GetMapper()
+        mapper.SetResolveCoincidentTopologyToPolygonOffset()
+        mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-2, -8)
+        mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-2, -8)
+        self.plotter.render()
         what = self.brush.stamp[0] if self.brush.kind == "stamp" and self.brush.stamp else self.brush.kind
         self.doc.hover_changed.emit(f"3D {mode} ({what}): {self.doc.describe(*target)} · "
                                     f"{len(points)} voxels")
@@ -634,6 +648,11 @@ class EditView(QtWidgets.QWidget):
 
     # --- keys -------------------------------------------------------------------------------
     def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.Wheel and size_step(event):
+            self.brush.set(size=self.brush.size + size_step(event))  # instead of zooming
+            if self.hover_pos is not None and self.stroke_mode is None:
+                self.update_hover(self.hover_pos)
+            return True
         if event.type() == QtCore.QEvent.Type.MouseButtonRelease:
             button = event.button()  # after the widget has passed it on to VTK, make sure it arrived
             QtCore.QTimer.singleShot(0, lambda: self.style.released(button))

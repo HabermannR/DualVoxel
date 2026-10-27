@@ -169,6 +169,32 @@ class EditorTests(unittest.TestCase):
         self.assertGreater(int((editor.model.colour > 0).sum()), whole)
         with self.assertRaises(ValueError):
             editor.speckle([0, 0, 0], [1, 1, 1], [[153, -1]])
+        # cloud: fills only empty cells, inside its shape, its coverage and colour shares, one undo step
+        editor.new_model(16, 16, 16)
+        editor.paint_box([0, 0, 0], [15, 15, 3], 144)
+        editor.cloud([0, 0, 0], [15, 15, 15], [[23, 1, 36], [194, 1, 36]], coverage=0.5, scale=3, seed=5)
+        c, m = editor.model.colour, editor.model.material
+        self.assertTrue((c[:4] == 144).all())  # the solid floor stays
+        gas = (c == 23) | (c == 194)
+        self.assertTrue((m[gas] == 36).all())
+        z, y, x = np.nonzero(gas)
+        self.assertTrue(((((x - 7.5) / 8) ** 2 + ((y - 7.5) / 8) ** 2 + ((z - 7.5) / 8) ** 2) <= 1).all())
+        self.assertLessEqual(abs(int((c == 23).sum()) - int((c == 194).sum())), 1)
+        self.assertLess(int(gas.sum()), int(0.5 * np.pi * 4 / 3 * 8 ** 3))  # the floor took some of its share
+        editor.undo()
+        self.assertFalse(((editor.model.colour == 23) | (editor.model.colour == 194)).any())
+        sparks = editor.cloud([0, 0, 4], [15, 15, 15], 23, shape="box", coverage=0.02, scale=0, seed=1)
+        self.assertGreater(sparks["changed_voxels"], 20)
+        # add_material: a model's own copy with fields changed, paintable, kept by a save
+        own = editor.add_material(37, "heart haze", {"light": "pulse", "emission": 1.5})
+        self.assertGreaterEqual(own["id"], 128)
+        self.assertEqual((own["material"]["group"], own["material"]["light"]), ("gas", "pulse"))
+        editor.paint_box([0, 0, 15], [1, 1, 15], 23, own["id"])
+        self.assertEqual(int(editor.model.material[15, 0, 0]), own["id"])
+        with self.assertRaises(ValueError):
+            editor.add_material(0, "x", {"shine": 1})
+        with self.assertRaises(ValueError):
+            editor.add_material(0, "x", {"light": "disco"})
 
     def test_place_model_and_project_instances(self):
         from core.scene import orient_from_text, place_plane
@@ -228,7 +254,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             async with ClientSession(reader, writer) as client:
                 await client.initialize()
                 tools = await client.list_tools()
-                self.assertEqual(len(tools.tools), 49)
+                self.assertEqual(len(tools.tools), 52)
                 self.assertFalse((await client.call_tool("open_model", {"path": str(ALCHEMIST)})).isError)
                 found = await client.call_tool("find_colour", {"hex_value": "#c78665", "count": 1})
                 self.assertFalse(found.isError)

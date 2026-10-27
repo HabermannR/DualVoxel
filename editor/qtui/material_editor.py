@@ -25,6 +25,7 @@ SLIDERS = {
     "sss": (0.0, 4.0, 0.05, 16.0),
     "sheen": (0.0, 1.0, 0.01, 1.0),
     "ior": (1.0, 2.5, 0.01, 3.0),
+    "anisotropy": (-0.95, 0.95, 0.01, 0.95),
 }
 LABELS = {"sss": "subsurface depth"}  # sss is how deep subsurface light travels; subsurface is how much
 STATUS_STYLE = {USED: "color: white; background: #3c8c50", SWITCH: "color: white; background: #b4821e",
@@ -113,8 +114,8 @@ class MaterialEditor(QtWidgets.QWidget):
         self.name_edit.editingFinished.connect(lambda: self._set_text("name", self.name_edit))
         self.group_box = QtWidgets.QComboBox()
         self.group_box.setEditable(True)
-        self.group_box.setToolTip("rough, glossy, metal, emissive, transparent, subsurface, special or a new "
-                                  "group; subsurface draws as scattering even without sss")
+        self.group_box.setToolTip("rough, glossy, metal, emissive, transparent, subsurface, gas, special or a new "
+                                  "group; subsurface draws as scattering even without sss, gas as a volume")
         self.group_box.lineEdit().editingFinished.connect(
             lambda: self.set_field("group", self.group_box.currentText().strip() or self.material["group"]))
         self.group_box.activated.connect(lambda _i: self.set_field("group", self.group_box.currentText()))

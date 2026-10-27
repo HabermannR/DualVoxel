@@ -59,6 +59,22 @@ class EditViewMouseTests(unittest.TestCase):
             QTest.qWait(50)
             self.assertFalse(view.style.stroking)
             self.assertTrue(orbits())
+
+            # Alt + left picks, whatever the brush: VTK's Qt widget never tells VTK about Alt, so it smoothed
+            from unittest import mock
+            view.brush.set(kind="smooth")
+            doc.set_colour(1)
+            before = doc.model.colour.copy()
+            alt = QtCore.Qt.KeyboardModifier.AltModifier
+            with mock.patch.object(QtWidgets.QApplication, "queryKeyboardModifiers", return_value=alt):
+                QTest.mousePress(widget, left, alt, centre)
+                QTest.mouseRelease(widget, left, alt, centre)
+            QTest.qWait(50)
+            self.assertTrue((doc.model.colour == before).all())  # nothing smoothed
+            self.assertIsNotNone(doc.picked)
+            x, y, z = doc.picked
+            self.assertEqual(doc.colour, int(before[z, y, x]))  # the colour under the mouse picked
+            self.assertNotEqual(doc.colour, 1)
             window.close()
         finally:
             render_view.RenderView.start = start

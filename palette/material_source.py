@@ -29,8 +29,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "pipeline"))
 import vx2  # noqa: E402
 
-NUMBERS = ("roughness", "metal", "emission", "ior", "transmission", "density", "sss", "subsurface", "sheen")
-WHOLE = ("metal", "emission", "transmission", "density", "sss", "subsurface", "sheen")  # written 0, 1, 4 when whole
+NUMBERS = ("roughness", "metal", "emission", "ior", "transmission", "density", "sss", "subsurface", "sheen", "anisotropy")
+WHOLE = ("metal", "emission", "transmission", "density", "sss", "subsurface", "sheen", "anisotropy")  # written 0, 1, 4 when whole
 MAX_LINE = 118
 
 

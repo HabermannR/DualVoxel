@@ -27,6 +27,14 @@ arcane glow) glow in the voxel colour and move with time; the view keeps
 drawing at 15 fps while a model has them, water or the staff field. Patterns
 such as rust patches, scratches or worn edges are painted voxel by voxel with
 rust, worn metal, scratched metal, worn leather and so on.
+Gas (smoke, steam, mist, glowing gas, flame: group `gas`) is a volume, not a
+surface. Light crosses its boundary unbent and scatters inside, once per
+**density** voxels on average, taking the voxel colour; **anisotropy** above 0
+sends that light on forward, so steam and mist glow toward the sun. Emission
+glows all through it, and the flame has the fire light's flicker (the view
+keeps drawing for it as for the magic lights). Solids inside
+or under gas keep their faces; two gases side by side draw as the one a ray
+entered first.
 `..\palette\build_material_test.py` builds `assets\material_test.vx2` (one
 sphere per material) and renders it to `outputs\material_test.png`;
 `..\palette\build_field_sweep.py` sweeps each field. After a change to the
@@ -63,11 +71,12 @@ render dock.
   the scene view; the slices' wheel moves the layer).
 - **Brush** (a dock at the top right, as MagicaVoxel's brush panel; it acts
   in the 3D view and the slices). **Mode:** Attach (A) adds voxels against the clicked face
-  or the floor and only fills empty ones, Paint (B) recolours voxels that are
-  there, Erase (E) removes them, Pick (P) takes colour and material,
+  or the floor and only fills empty ones, Paint (B) gives voxels that are
+  there the current colour and material, or only one (the Paints row: Colour +
+  material, Colour, Material, which also turns on the material view), Erase (E) removes them, Pick (P) takes colour and material,
   Protect (L) marks voxels an assistant may not change over the live link
   (tinted violet; Shift lifts it; Tools > Clear protection lifts all).
-  **Brush:** Voxel (a size, 1-32, `[` and `]` in the 3D view; square or
+  **Brush:** Voxel (a size, 1-32, `[` and `]` in the 3D view, Alt + Shift + wheel there and in the slices; square or
   circle; 2D, flat across the clicked face, or 3D, a cube or sphere, resting
   on the face when attaching), Face (the clicked face's whole connected flat
   area: attach builds a layer on it), Box (drag a rectangle in the clicked
@@ -141,7 +150,8 @@ render dock.
   copy of it ("matte (own)") and moves this model's voxels onto the copy
   (one undo step); the shared one stays as it is. Name, group and note are
   editable; sliders for roughness, metal, emission, transmission, density,
-  subsurface, subsurface depth (sss), sheen and ior, and its magic light,
+  subsurface, subsurface depth (sss), sheen, ior and anisotropy (gas only),
+  and its magic light,
   live in the Render dock. The Materials dock lists the model's own
   first ("this model"). The renderer blends every field as Blender's Principled BSDF does:
   the voxel colour is the base, **metal** goes over the rest,
@@ -173,7 +183,7 @@ render dock.
   the same and every material it knows keeps its id and name. Until then the
   target keeps its own copies.
 - **Render:** drag orbits (the same way round as the 3D view), middle drag
-  pans, double click frames. Pause (in the Light dock, or F9) stops drawing
+  pans, double click frames. Pause (in the Render setup dock, or F9) stops drawing
   and frees the GPU, keeping the last picture; edits made meanwhile show on
   resume. A hidden or closed render dock draws nothing.
 - **Light** (a tab beside Brush): a preset to start from, Golden hour and
@@ -185,14 +195,34 @@ render dock.
   Custom (the renderer's `renderer_set_light`). Sun and Sky scale the sun's and
   the sky's strength (1 each as set, 0 none, up to 3); Default light goes back
   to the golden hour at its own strength, Lights off shows what glows on its
-  own; Tilt blur switches the tilt-shift band; Pause render (F9)
-  stops the render. Only the picture changes, never the model.
-- **Render picture…** (File menu, Ctrl+Shift+R, or the Light dock's
+  own. Only the picture changes, never the model.
+- **Render setup** (a dock beside Light; `qtui\render_setup_panel.py`):
+  tilt blur, pause, and the surroundings (`core\lights.py`): an HDR environment,
+  any OpenEXR (the `.exr` files of `editor.local.json`'s `"environments"`
+  folder are listed, EXR file… opens any other; none come with the editor:
+  free CC0 ones are at [Poly Haven](https://polyhaven.com/hdris), whose 2K
+  `.exr` files are plenty, since the renderer uses at most 2048 wide),
+  lights the model instead of the sun and sky, importance-sampled so a small
+  bright sun stays smooth, with a strength and a turn; and the floor: the
+  wooden table, matte, mirror, polished metal, cloth or none, in its preset's
+  colour and roughness or one's own. The MCP's render tools take
+  `surroundings` and `floor`.
+- **Render picture…** (File menu, Ctrl+Shift+R, or the Export dock's
   button): a picture of the Render dock's view up to 8192 a side, with a
   finish (none, film, night: `postprocess.py`), saved as a PNG. It draws in
   steps in the Render dock (`RenderView.render_still`), showing its samples,
   and can be cancelled; the MCP's `render_file` and the API's `save_render`
   make the same pictures without the window.
+- **Export** (a dock beside Light; `qtui\export_panel.py`): Render picture…,
+  and an orbit video with its settings kept in the dock: the camera turns
+  about what the Render dock looks at by an angle (360 once round, less an
+  arc centred on the view, optionally swung out and back so it loops) over a
+  length, each frame a picture with the magic lights at that frame's moment
+  (`animation.py`, the renderer's capture clock), saved as MP4 (ffmpeg), WebP
+  or GIF. Preview orbit swings the live view the same way; Render video…
+  (also File menu, Ctrl+Shift+V) asks only for the file. Drawn like a
+  picture, and cancelled the same way; the MCP's `render_orbit` and the API's
+  `save_orbit` make the same without the window.
 - **Scenes** (models placed together, as MagicaVoxel's world or Blender's
   objects): a project, `..\assets\<name>.project.json` (Scene → New / Open /
   Save project, Ctrl+Alt+S; the command line opens one too), lists

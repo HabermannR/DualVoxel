@@ -100,14 +100,14 @@ You never have to remember this: the Brush dock shows the current mapping under 
 ### Modes
 
 - **Attach** (`A`) adds voxels against the clicked face, or on the floor. It only fills empty places and never overwrites a voxel.
-- **Paint** (`B`) gives existing voxels the current colour and material.
+- **Paint** (`B`) gives existing voxels the current colour and material, or only one of them: the **Paints** row below the modes chooses *Colour + material*, *Colour* (the materials stay) or *Material* (the colours stay; the edit views then show materials). It counts for Ctrl + left in Attach too; Attach itself always adds both.
 - **Erase** (`E`) removes voxels.
 - **Pick** (`P`) takes a voxel's colour and material.
 - **Protect** (`L`) marks voxels an AI assistant may not change while it works in the editor ([section 7](#7-working-with-an-assistant)). Protected voxels are tinted violet; Shift + left lifts the protection. It changes nothing in the model.
 
 ### Brushes
 
-- **Voxel**: a square or circle (**2D**, flat against the clicked face) or a cube or sphere (**3D**), 1 to 32 voxels. `[` and `]` change the size in the 3D view.
+- **Voxel**: a square or circle (**2D**, flat against the clicked face) or a cube or sphere (**3D**), 1 to 32 voxels. `[` and `]` change the size in the 3D view, and so does the mouse wheel with `Alt` + `Shift` held, there and in the slices.
 - **Face**: the clicked face's whole connected flat area. Attach builds a new layer on it; paint and erase take all of it.
 - **Box**: drag a rectangle in the clicked layer.
 - **Ellipsoid**: drag a rectangle on a face and get the ellipsoid over it. **Height** sets how many layers it stands (auto: the rectangle's shorter side, so a square gives a sphere). Attach rests it on the face; paint and erase sink it into the surface. In a slice it is centred on the layer.
@@ -126,6 +126,8 @@ The **Sculpt** row reshapes what is already there, inside the brush's size and s
 - **Grow** adds a skin of voxels in the colours of their neighbours.
 
 Shift swaps Erode and Grow. Dragging over the same place several times digs (or builds) deeper; for a light touch, click once.
+
+A sculpt brush does the same whatever the mode, so while one is chosen no mode shows as chosen, and its preview in the 3D view shows what it does: green where Grow adds, red where Erode takes off, white for Smooth. Choosing a mode (its button or key) goes back to the brush you used before.
 
 <img src="figures/current_brush_sculpt.png" width="468" alt="Smooth chosen in the Sculpt row">
 
@@ -285,20 +287,11 @@ The Render dock shows the model in a GPU path tracer, standing on a wooden table
 
 ![The Render dock](figures/current_render.png)
 
-#### Rendering a picture
-
-**File → Render picture…** (`Ctrl+Shift+R`), or **Render picture…** in the Light dock, saves a high-resolution picture of what the Render dock shows: its camera, its light and the tilt blur.
-
-- **Width**, **Height**: up to 8192 each. By default the height follows the Render dock's shape; typing a height of your own lets go of it.
-- **Samples**: per pixel; more is smoother and slower. 512 to 1024 is enough for a final picture. 2160 × 2700 at 768 samples takes about a minute.
-- **Finish**: `none` saves the picture as traced, which is right for judging colours. `film` adds a tone curve, soft bloom and a vignette. `night` adds strong bloom on glows and reds, cool shadows and grain.
-- **File**: a PNG, by default in `editor/outputs/`, named after the model.
-
-The picture draws in the Render dock. The corner shows its size and the samples so far, and the window stays usable. While it draws, edits and camera moves wait for the next live picture. The button in the Light dock turns into **Cancel picture**. When the picture is done, the status bar says where it was saved.
+Three docks beside it, tabs beside Brush, set what the Render dock shows and what you take from it: **Light** (the sun and the sky), **Render setup** (what the model stands in and on, and how the dock draws) and **Export** (pictures and orbit videos). Only the picture changes, never the model.
 
 ### The Light dock
 
-The **Light** dock (a tab beside Brush) sets the sun and the sky. Only the picture changes, never the model.
+The **Light** dock sets the sun and the sky.
 
 <img src="figures/current_light_dock.png" width="480" alt="The Light dock">
 
@@ -308,9 +301,6 @@ The **Light** dock (a tab beside Brush) sets the sun and the sky. Only the pictu
 - **Colour buttons**: the sun's colour, the sky's horizon and zenith, and the background. A bright sun stays bright in a new colour.
 - **Default light**: back to the standard golden hour.
 - **Lights off**: sun and sky off, to see what glows on its own.
-- **Tilt blur**: the miniature-style blur above and below the model; off shows everything sharp.
-- **Render picture…**: a high-resolution picture of the Render dock's view, saved as a PNG ([Rendering a picture](#rendering-a-picture)).
-- **Pause render** (`F9`): stops drawing and frees the GPU, keeping the last picture.
 
 Changing the direction or a colour turns the preset into **Custom**.
 
@@ -321,6 +311,46 @@ Changing the direction or a colour turns the preset into **Custom**.
 | ![Overcast](figures/current_light_overcast.png) | ![Night](figures/current_light_night.png) |
 
 *The same model under four presets. At night the glowing crystal on the staff is the main light.*
+
+### The Render setup dock
+
+**Surroundings** sets what the model stands in and on.
+
+- **Environment**: *Sun and sky* is the Light dock's. Any HDR environment (an OpenEXR, latitude-longitude; [Poly Haven](https://polyhaven.com/hdris) has hundreds, free under CC0, and the 2K `.exr` is plenty) lights the model from all round instead and shows behind it; the Light dock's sun and sky wait meanwhile. The list holds the `.exr` files of folders of your own, set as `"environments"` in `editor/editor.local.json` (one folder, or a list; `editor/environments` without it); **EXR file…** opens any other. None come with the editor. A bright sun or lamp in the map stays smooth: the renderer aims its light rays where the map is bright.
+- **Strength**: the environment's brightness, 1 as the file has it. Studio maps are bright; 0.3 to 0.6 often looks right.
+- **Turn**: turns the environment about the vertical, to bring its sun or lamps round.
+- **Floor**: the wooden table, matte, mirror, polished metal, cloth (a fine weave), or none, leaving the model floating.
+- **Floor colour**, **Roughness**: for every floor but the table and none; a new floor starts with its own (roughness *preset*).
+
+Below them:
+
+- **Tilt blur**: the miniature-style blur above and below the model; off shows everything sharp.
+- **Pause render** (`F9`): stops drawing and frees the GPU, keeping the last picture.
+
+### The Export dock
+
+Both draw in the Render dock, with its camera, light and setup. The corner counts the samples (and an orbit's frames), the window stays usable, and edits and camera moves wait for the next live picture. While one draws, its button turns into **Cancel picture** or **Cancel video**, which stops it and leaves no file behind. When it is done, the status bar says where it was saved.
+
+#### Rendering a picture
+
+**Render picture…** (or **File → Render picture…**, `Ctrl+Shift+R`) asks for a picture's settings and file:
+
+- **Width**, **Height**: up to 8192 each. By default the height follows the Render dock's shape; typing a height of your own lets go of it.
+- **Samples**: per pixel; more is smoother and slower. 512 to 1024 is enough for a final picture. 2160 × 2700 at 768 samples takes about a minute.
+- **Finish**: `none` saves the picture as traced, which is right for judging colours. `film` adds a tone curve, soft bloom and a vignette. `night` adds strong bloom on glows and reds, cool shadows and grain.
+- **File**: a PNG, by default in `editor/outputs/`, named after the model.
+
+#### Rendering an orbit video
+
+**Orbit video** films the camera turning about what the Render dock looks at, keeping its height, distance and light. Flames, pulsing glows and the other magic lights move in it as they do in the live view. Its settings stay in the dock:
+
+- **Angle**: how far the camera turns. 360° goes once round from the view; less sweeps an arc centred on it, so 60° runs from 30° left of the view to 30° right. Below 0 turns the other way.
+- **Swing out and back** (on by default): out to one end of the arc, back through the view to the other end and home, slowing at the ends, so the video loops at any angle. Off, the camera sweeps once from end to end.
+- **Length** and frames per second: the frames are counted below. For the same angle, a longer video is a slower, calmer camera; the defaults, 60° swung over 10 seconds, are gentle.
+- **Size**: by default the height follows the Render dock's shape (**Dock's shape**); typing a height of your own lets go of it.
+- **Samples**, **Finish**: as for a picture. Each frame is a picture of its own, so a frame takes as long as a picture of that size: 1080 × 1350 at 128 samples is about 5 seconds on a night scene with gas, 26 minutes for 10 seconds at 30 frames a second.
+- **Preview orbit**: swings the live view as the video will, over and over, to judge the angle and speed first. Grabbing the view stops it there; switching it off puts the camera back.
+- **Render video…** (or **File → Render video…**, `Ctrl+Shift+V`): asks only for the file, `.mp4` (needs [ffmpeg](https://ffmpeg.org) on the PATH), `.webp` or `.gif` (both always work; a GIF has only 256 colours a frame), and starts.
 
 ---
 
@@ -458,6 +488,7 @@ The 3D-view keys work while the 3D edit view has the focus.
 | `Ctrl+Z`, `Ctrl+Y` | Undo, redo |
 | `A`, `B`, `E`, `P`, `L` | Attach, paint, erase, pick, protect |
 | `[`, `]` | Brush size down, up |
+| `Alt` + `Shift` + wheel | Brush size (3D view and slices) |
 | `R`, `Shift+R` | Turn the stamp, or the selected instance |
 | `Esc` | Stop stamping |
 | `F9` | Pause or resume the render |

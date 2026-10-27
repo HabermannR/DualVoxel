@@ -8,7 +8,7 @@ ones lie in the layer, volumes reach the layers around it), box a rectangle in
 the layer (drag it), ellipsoid the ellipsoid over a dragged rectangle, centred
 on the layer, face the connected area of the clicked cell's colour in the
 layer, and the sculpting brushes; mirroring as set. A stamp is a 3D-view brush.
-The wheel moves the layer. Empty cells show the nearest voxel behind
+The wheel moves the layer (Alt + Shift + wheel: the brush size). Empty cells show the nearest voxel behind
 the layer, dimmed, so the slice keeps its place in the figure. With the pick
 tool, left picks too. Voxels protected from the assistant are tinted violet.
 While the Noise dock is in sight its box is outlined (dashed when the layer is
@@ -21,7 +21,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from core.brushes import layer_region, mirrored, placed
-from qtui.brush import DRAGGED, SCULPT, brush_edit, held_mode
+from qtui.brush import DRAGGED, SCULPT, brush_edit, held_mode, size_step
 from qtui.document import PROTECT_MODES
 from qtui.edit_view import PROTECTED_RGB, PROTECTED_TINT
 
@@ -198,6 +198,10 @@ class SliceCanvas(QtWidgets.QWidget):
         self.update()
 
     def wheelEvent(self, event):
+        if size_step(event) and self.view.brush is not None:
+            self.view.brush.set(size=self.view.brush.size + size_step(event))
+            self.update()
+            return
         step = 1 if event.angleDelta().y() > 0 else -1
         self.view.depth_box.setValue(self.view.depth_box.value() + step)
 

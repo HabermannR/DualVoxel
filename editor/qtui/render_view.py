@@ -10,6 +10,7 @@ steps (the window stays responsive), showing its progress here.
 """
 from __future__ import annotations
 
+import math
 import sys
 import time
 
@@ -28,6 +29,7 @@ class RenderView(QtWidgets.QWidget):
     paused_changed = QtCore.Signal(bool)
     still_changed = QtCore.Signal(bool)  # a picture started (True) or ended
     still_finished = QtCore.Signal(str, str)  # the saved file ("" when it failed or was cancelled), a message
+    preview_changed = QtCore.Signal(bool)  # the orbit preview started (True) or stopped
 
     def __init__(self, doc):
         super().__init__()
@@ -47,9 +49,12 @@ class RenderView(QtWidgets.QWidget):
         self.sun, self.sky = 1.0, 1.0  # the built-in daylight; the Light dock sets them
         self.golden = True  # the built-in golden hour, else its daytime light
         self.custom_light = None  # None: the built-in light; else the 18 numbers of renderer_set_light
+        from core.lights import SURROUNDINGS
+        self.surroundings = dict(SURROUNDINGS)  # an HDR environment and the floor (core/lights.py)
         self.source = None  # None: the model being edited; else a callable giving the Model to draw (a scene)
         self._drawn = None  # the Model drawn last, to reframe when another one takes its place
         self.still = None  # the picture render_still is drawing: its file, size, camera, samples so far
+        self.preview = None  # the orbit preview_orbit swings the camera through: its start, angle, length
         doc.reset.connect(self._on_reset)
         doc.resized.connect(self._on_reset)
         doc.material_edited.connect(self._on_material_edited)
@@ -71,6 +76,13 @@ class RenderView(QtWidgets.QWidget):
         self.engine.renderer.daylight(self.sun, self.sky)
         self.engine.renderer.golden_hour(self.golden)
         self.engine.renderer.light(self.custom_light is not None, self.custom_light)
+        try:
+            from core.lights import apply_surroundings
+            apply_surroundings(self.engine.renderer, self.surroundings)
+        except (OSError, ValueError, RuntimeError) as error:  # an HDR file gone: the sun and sky instead
+            print(f"Surroundings unavailable: {error}", file=sys.stderr)
+            self.surroundings = {**self.surroundings, "environment": "sky"}  # what is drawn, as the dock shows
+            apply_surroundings(self.engine.renderer, self.surroundings)
         if not self.paused:
             self._tick.start()
 
@@ -98,6 +110,16 @@ class RenderView(QtWidgets.QWidget):
             self.engine.renderer.golden_hour(self.golden)
             self.engine.renderer.light(self.custom_light is not None, self.custom_light)
             self.engine.samples = 0
+
+    def set_surroundings(self, **changes):
+        """Change the surroundings (core.lights.SURROUNDINGS' keys): an HDR environment and its strength and
+        turn, the floor. Raises ValueError (and keeps the old ones) when an environment cannot be had."""
+        from core.lights import apply_surroundings, check_surroundings
+        wanted = check_surroundings({**self.surroundings, **changes})
+        if self.engine is not None:
+            apply_surroundings(self.engine.renderer, wanted)
+            self.engine.samples = 0
+        self.surroundings = wanted
 
     def set_tilt_blur(self, enabled: bool):
         self.tilt_blur = enabled
@@ -167,6 +189,7 @@ class RenderView(QtWidgets.QWidget):
             return f"Width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}."
         if look not in LOOKS:
             return f"Unknown finish {look!r}: one of {', '.join(LOOKS)}."
+        self.preview_orbit(None)  # the picture from the view, not from wherever the preview has swung
         self.engine.sync(self.drawn_model(), self.camera, force=True)
         cam = self.camera
         self.still = {"path": str(path), "look": look, "samples": int(samples), "done": 0, "shown": 0.0,
@@ -178,9 +201,67 @@ class RenderView(QtWidgets.QWidget):
         self.update()
         return None
 
+    def render_orbit(self, path, width: int, height: int, samples: int, look: str = "none", frames: int = 120,
+                     fps: float = 30, degrees: float = 360, swing: bool = False) -> str | None:
+        """Start an orbit animation (animation.py): from the dock's camera, `degrees` about the vertical axis
+        through what it looks at (an arc centred on the view, or swinging out and back), `frames` stills
+        of `samples` per pixel with the magic lights at each frame's moment, written to `path` (.mp4, .gif
+        or .webp) as they finish. Drawn in steps like render_still;
+        still_finished tells how it ended. Returns why it cannot start, else None."""
+        import animation
+        from postprocess import LOOKS
+        max_width, max_height, max_samples, max_frames = animation.ORBIT_LIMITS
+        if self.engine is None:
+            return "The renderer is not running."
+        if self.still is not None:
+            return "A picture is already rendering."
+        if not (16 <= width <= max_width and 16 <= height <= max_height and 1 <= samples <= max_samples
+                and 2 <= frames <= max_frames):
+            return f"Width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}, frames 2-{max_frames}."
+        if look not in LOOKS:
+            return f"Unknown finish {look!r}: one of {', '.join(LOOKS)}."
+        try:
+            writer = animation.FrameWriter(path, width, height, fps, frames)
+        except (OSError, ValueError) as error:
+            return str(error)
+        self.preview_orbit(None)  # from the view the preview swings about
+        self.engine.sync(self.drawn_model(), self.camera, force=True)
+        cam = self.camera
+        views = animation.orbit_views(cam.pos, cam.fwd, cam.right, cam.up, cam.target, frames, degrees, swing)
+        self.still = {"path": str(path), "look": look, "samples": int(samples), "done": 0, "shown": 0.0,
+                      "rgba": np.zeros((height, width, 4), dtype=np.uint8), "view": list(views[0]),
+                      "orbit": {"views": views, "index": 0, "writer": writer, "fps": float(fps)}}
+        self.engine.renderer.capture_time(0)
+        self.engine.renderer.capture(int(samples))
+        self._tick.start()
+        self.still_changed.emit(True)
+        self.update()
+        return None
+
+    def preview_orbit(self, settings: dict | None) -> None:
+        """Swing the live camera as an orbit video would ({"degrees", "swing", "seconds"}), over and over,
+        to judge the angle and speed before rendering; None stops and puts the camera back. Grabbing
+        the view stops it too."""
+        if self.preview is not None:
+            self.camera.yaw = self.preview["yaw"]
+            self.camera.update_vectors()
+            self._moved()
+        self.preview = None if settings is None else {**settings, "yaw": self.camera.yaw, "start": time.perf_counter()}
+        self.preview_changed.emit(self.preview is not None)
+
+    def _preview_step(self) -> None:
+        import animation
+        preview = self.preview
+        fraction = (time.perf_counter() - preview["start"]) / max(preview["seconds"], 0.1) % 1
+        # the camera's yaw turns clockwise seen from above; an orbit's angle counter-clockwise
+        self.camera.yaw = preview["yaw"] - math.radians(animation.orbit_angle(fraction, preview["degrees"],
+                                                                               preview["swing"]))
+        self.camera.update_vectors()
+        self._moved()
+
     def cancel_still(self):
         if self.still is not None:
-            self._end_still("", "Picture cancelled.")
+            self._end_still("", "Animation cancelled." if "orbit" in self.still else "Picture cancelled.")
 
     def _still_step(self):
         still = self.still
@@ -201,6 +282,9 @@ class RenderView(QtWidgets.QWidget):
         from PIL import Image
         from postprocess import finish
         still = self.still
+        if "orbit" in still:
+            self._next_orbit_frame()
+            return
         try:
             Image.fromarray(finish(still["rgba"][..., :3].copy(), still["look"])).save(still["path"], format="PNG")
         except (OSError, ValueError) as error:
@@ -209,9 +293,35 @@ class RenderView(QtWidgets.QWidget):
         h, w = still["rgba"].shape[:2]
         self._end_still(still["path"], f"Saved a {w} x {h} picture ({still['samples']} spp) to {still['path']}")
 
+    def _next_orbit_frame(self):
+        """An orbit's frame is done: write it, then start the next one, or close the file after the last."""
+        from postprocess import finish
+        still = self.still
+        orbit = still["orbit"]
+        try:
+            orbit["writer"].add(finish(still["rgba"][..., :3].copy(), still["look"]))
+            orbit["index"] += 1
+            if orbit["index"] == len(orbit["views"]):
+                orbit["writer"].close()
+            else:
+                still["view"], still["done"] = list(orbit["views"][orbit["index"]]), 0
+                self.engine.renderer.capture_time(orbit["index"] / orbit["fps"])
+                self.engine.renderer.capture(still["samples"])  # starts the next frame's accumulation
+                return
+        except (OSError, ValueError) as error:
+            self._end_still("", f"The animation could not be saved: {error}")
+            return
+        h, w = still["rgba"].shape[:2]
+        self._end_still(still["path"], f"Saved a {w} x {h} orbit, {orbit['index']} frames "
+                                       f"({orbit['index'] / orbit['fps']:.1f} s), to {still['path']}")
+
     def _end_still(self, path: str, message: str):
+        orbit = self.still.get("orbit") if self.still else None
+        if orbit is not None and not path:
+            orbit["writer"].abort()  # cancelled or failed: no half a file
         self.still = None
         if self.engine is not None:
+            self.engine.renderer.capture_time(0)
             self.engine.renderer.capture(0)
             self.engine.samples = 0  # the live picture draws again at the dock's size
             self.engine.last_frame = 0.0
@@ -239,6 +349,8 @@ class RenderView(QtWidgets.QWidget):
         if model is not self._drawn:
             self._drawn = model
             self._on_reset()
+        if self.preview is not None:
+            self._preview_step()
         try:
             engine.sync(model, self.camera)
             moving = time.perf_counter() < self.moving_until
@@ -276,6 +388,10 @@ class RenderView(QtWidgets.QWidget):
             if self.still is not None:
                 h, w = self.still["rgba"].shape[:2]
                 status = f"picture {w} x {h} · {self.still['done']} / {self.still['samples']} spp"
+                if "orbit" in self.still:
+                    orbit = self.still["orbit"]
+                    status = (f"orbit {w} x {h} · frame {orbit['index'] + 1} / {len(orbit['views'])} · "
+                              f"{self.still['done']} / {self.still['samples']} spp")
             else:
                 status = f"paused · {self.samples} spp" if self.paused else f"{self.samples} spp"
             painter.drawText(self.rect().adjusted(6, 4, -6, -4),
@@ -298,6 +414,9 @@ class RenderView(QtWidgets.QWidget):
         self.moving_until = time.perf_counter() + 0.15
 
     def mousePressEvent(self, event):
+        if self.preview is not None:  # grabbing the view takes it back from the preview, where it is now
+            self.preview = None
+            self.preview_changed.emit(False)
         self.drag = (event.button(), event.position())
 
     def mouseMoveEvent(self, event):

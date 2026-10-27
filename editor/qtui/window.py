@@ -16,7 +16,9 @@ from qtui.material_editor import MaterialEditor
 from qtui.material_panel import MaterialPanel
 from qtui.palette_panel import TOOL_KEYS, PalettePanel
 from qtui.brush_panel import install_brush_panel
+from qtui.export_panel import install_export_panel
 from qtui.light_panel import install_light_panel
+from qtui.render_setup_panel import install_render_setup_panel
 from qtui.model_panel import install_model_panel
 from qtui.noise_panel import install_noise_panel
 from qtui.render_view import RenderView
@@ -84,8 +86,14 @@ class EditorWindow(QtWidgets.QMainWindow):
 
         self._menus()
         self.brush_panel = install_brush_panel(self)  # the 3D edit view's brushes
-        self.light_panel = install_light_panel(self)  # the render's sun, sky and tilt blur
-        self.light_panel.picture_requested.connect(self.render_picture_dialog)
+        self.light_panel = install_light_panel(self)  # the render's sun and sky
+        self.setup_panel = install_render_setup_panel(self)  # surroundings, floor, tilt blur, pause
+        self.export_panel = install_export_panel(self)  # pictures and orbit videos
+        self.export_panel.picture_requested.connect(self.render_picture_dialog)
+        view = next(m for m in self.menuBar().findChildren(QtWidgets.QMenu) if m.title() == "&View")
+        first_separator = next((a for a in view.actions() if a.isSeparator()), None)  # after the docks listed
+        for title in ("Brush", "Light", "Render setup", "Export"):  # docks made after the menus
+            view.insertAction(first_separator, self.docks[title].toggleViewAction())
         self.render_view.still_finished.connect(self._picture_done)
         self.noise_panel = install_noise_panel(self)  # speckle, terrain, erode, scatter on a box
         self.model_panel = install_model_panel(self)  # the model's box: size, fit, shift, turn, flip
@@ -149,6 +157,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._action(file, "Save as…", self.save_as, "Ctrl+Shift+S")
         file.addSeparator()
         self._action(file, "Render picture…", self.render_picture_dialog, "Ctrl+Shift+R")
+        self._action(file, "Render video…", self.render_video, "Ctrl+Shift+V")
         file.addSeparator()
         targets = send_targets()
         for name, path in targets:
@@ -379,10 +388,18 @@ class EditorWindow(QtWidgets.QMainWindow):
                           "look": look_box, "path": path_box}  # for tests
         return dialog, read
 
+    def render_video(self):
+        """File > Render video…: the Export dock's orbit video with its settings, after asking for the file."""
+        self.docks["Export"].toggleView(True)
+        path = self.export_panel.render_video()
+        if path:
+            self.docks["Render"].toggleView(True)
+            self.statusBar().showMessage(f"Rendering an orbit video to {Path(path).name}…", 4000)
+
     def _picture_done(self, path: str, message: str):
         if path:
             self.statusBar().showMessage(message, 10000)
-        elif message != "Picture cancelled.":
+        elif message not in ("Picture cancelled.", "Animation cancelled."):
             QtWidgets.QMessageBox.warning(self, "Render picture", message)
         else:
             self.statusBar().showMessage(message, 4000)

@@ -19,7 +19,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from core import noise  # noqa: E402
-from core.lights import apply_preset, apply_state, preset_name  # noqa: E402
+from core.lights import apply_preset, apply_state, apply_surroundings, check_surroundings, preset_name  # noqa: E402
 from core.model import ANCHORS, Model, ROOT as PIPELINE, transform_plane  # noqa: E402
 from logic.tools import commit_shape  # noqa: E402
 # here, on the main thread: loaded first on the MCP server's worker thread, scipy's DLLs hang on Windows
@@ -118,6 +118,37 @@ class VoxelEditor:
     @synchronized
     def materials(self):
         return [{k: m[k] for k in ("id", "name", "group", "engine", "note")} for m in self.model.all_materials()]
+
+    MATERIAL_NUMBERS = ("roughness", "metal", "emission", "ior", "transmission", "density", "sss", "subsurface",
+                        "sheen", "anisotropy")
+
+    @synchronized
+    def add_material(self, base=0, name="", fields=None):
+        """One of the model's own materials (ids 128 up, saved in its .vx2), as the Materials dock's New
+        material: a copy of material `base` named `name`, with `fields` changed: the numbers of
+        MATERIAL_NUMBERS, "group" (gas makes a volume), "light" (a magic light's name or "") and "note".
+        Returns its id and fields."""
+        from voxel_renderer import LIGHT_STYLE
+        self.model._check_material(base)
+        material = dict(self.model.material_info(base))
+        for key, value in (fields or {}).items():
+            if key in self.MATERIAL_NUMBERS:
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
+                    raise ValueError(f"{key} is a number")
+                material[key] = float(value)
+            elif key == "light":
+                if value and value not in LIGHT_STYLE:
+                    raise ValueError(f"light is one of {', '.join(LIGHT_STYLE)}, or \"\"")
+                material[key] = value or ""
+            elif key in ("group", "note"):
+                material[key] = str(value)
+            else:
+                raise ValueError(f"{key} is not a material field; use {', '.join(self.MATERIAL_NUMBERS)}, group, "
+                                 "light or note")
+        material["name"] = str(name).strip() or f"{material['name']} (own)"
+        material["engine"] = "yes"
+        new = self.model.add_local(material)
+        return {"id": new, "material": self.model.local[new]}
 
     # --- edits ---------------------------------------------------------------------------
     def _locked(self):
@@ -603,6 +634,37 @@ class VoxelEditor:
                     c[z + dz, y, x], m[z + dz, y, x] = colour, material
         return self._finish(self.model._edit(apply))
 
+    @synchronized
+    def cloud(self, start, end, colours, shape="ellipsoid", coverage=0.6, scale=4.0, softness=0.5, seed=0):
+        """A soft, uneven body in the empty cells of a box, never over a solid: gas puffs, mist banks, smoke,
+        leafy crowns. shape "ellipsoid" (the one the box holds) or "box"; coverage: the share of the shape's
+        cells it takes; scale: its lumps in voxels (0: single scattered voxels, as fireflies or sparks);
+        softness (0-1) thins it toward the shape's edge. colours: a slot or a weighted palette as in speckle,
+        each colour taking its share exactly."""
+        box, lo, hi = self._noise_box(start, end)
+        self._check_seed(seed, scale, coverage)
+        self._check_seed(seed, 0, softness)
+        if shape not in ("ellipsoid", "box"):
+            raise ValueError('shape is "ellipsoid" or "box"')
+        slots, weights, materials = self._entries(colours, "colours")
+        # -1..1 across the box at the cell centres, per axis; r is 1 on the shape's edge
+        x, y, z = [(np.arange(h - l + 1) - (h - l) / 2) / ((h - l + 1) / 2) for l, h in zip(lo, hi)]
+        z, y, x = np.meshgrid(z, y, x, indexing="ij")
+        r = np.sqrt(x * x + y * y + z * z) if shape == "ellipsoid" else np.maximum(abs(x), np.maximum(abs(y), abs(z)))
+        within = r <= 1
+        score = np.where(within, noise.value_noise(r.shape, scale, seed, octaves=2) - float(softness) * r * r, -np.inf)
+        chosen = np.zeros(r.size, bool)
+        chosen[np.argsort(score, axis=None, kind="stable")[::-1][:round(float(coverage) * int(within.sum()))]] = True
+        rng = np.random.default_rng(seed + 1)
+
+        def apply(c, m):
+            local = np.nonzero(chosen.reshape(r.shape) & (c[box] == 0))
+            cells = tuple(axis + o for axis, o in zip(local, (lo[2], lo[1], lo[0])))
+            pick = noise.weighted_choice(rng.random(len(cells[0])), weights)
+            c[cells] = np.array(slots, np.uint8)[pick]
+            m[cells] = np.array([0 if v is None else v for v in materials], np.uint8)[pick]
+        return self._finish(self.model._edit(apply))
+
     # --- reading what is there -----------------------------------------------------------------
     @synchronized
     def read_slice(self, axis, depth, what="colour"):
@@ -680,19 +742,22 @@ class VoxelEditor:
 
     @synchronized
     def render_png(self, yaw=-25.0, pitch=10.0, width=640, height=640, samples=64, light="Golden hour",
-                   model: Model | None = None, view: dict | None = None, look="none"):
-        """The model in the path tracer, on the wooden table under one of the Light dock's presets
-        (Golden hour, Day, Noon, Overcast, Night). model: another model to draw, else this one. view: the
-        editor's Render dock camera and light ({"eye", "forward", "right", "up", "light"}) instead of yaw,
-        pitch and the preset. look: a finish from postprocess.LOOKS ("none", "film", "night")."""
-        return self._render(yaw, pitch, width, height, samples, light, model, view, look, PICTURE_LIMITS)
+                   model: Model | None = None, view: dict | None = None, look="none", surroundings=None):
+        """The model in the path tracer under one of the Light dock's presets (Golden hour, Day, Noon,
+        Overcast, Night). model: another model to draw, else this one. view: the editor's Render dock
+        camera and light ({"eye", "forward", "right", "up", "light"}) instead of yaw, pitch, the preset and
+        the surroundings. look: a finish from postprocess.LOOKS ("none", "film", "night"). surroundings:
+        core.lights.SURROUNDINGS' keys (an HDR environment instead of the sun and sky, and the floor);
+        None, the sun and sky on the wooden table."""
+        return self._render(yaw, pitch, width, height, samples, light, model, view, look, PICTURE_LIMITS, surroundings)
 
-    def _render(self, yaw, pitch, width, height, samples, light, model, view, look, limits):
+    def _render(self, yaw, pitch, width, height, samples, light, model, view, look, limits, surroundings=None):
         model = model or self.model
         max_width, max_height, max_samples = limits
         if not (16 <= width <= max_width and 16 <= height <= max_height and 1 <= samples <= max_samples):
             raise ValueError(f"width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}")
         preset_name(light)  # an unknown name fails before the engine starts
+        check_surroundings(surroundings)
         if look not in LOOKS:
             raise ValueError(f"Unknown look {look!r}: one of {', '.join(LOOKS)}.")
         if not (model.colour > 0).any():
@@ -708,6 +773,7 @@ class VoxelEditor:
         from PIL import Image
         if view is None:
             apply_preset(self._engine, light)
+            apply_surroundings(self._engine, surroundings)
             rgba = self._engine.render(width, height, yaw_deg=yaw, pitch_deg=pitch, samples=samples)
         else:
             apply_state(self._engine, view["light"])
@@ -731,12 +797,53 @@ class VoxelEditor:
         return str(target)
 
     def save_render(self, name="render.png", yaw=-25.0, pitch=10.0, width=640, height=640, samples=64,
-                    light="Golden hour", model: Model | None = None, view: dict | None = None, look="none"):
+                    light="Golden hour", model: Model | None = None, view: dict | None = None, look="none",
+                    surroundings=None):
         """render_png's picture saved in the outputs folder, up to FILE_LIMITS (print sizes) instead of the
         size a picture handed back may have."""
         target = self.output_path(name)
-        target.write_bytes(self._render(yaw, pitch, width, height, samples, light, model, view, look, FILE_LIMITS))
+        target.write_bytes(self._render(yaw, pitch, width, height, samples, light, model, view, look, FILE_LIMITS,
+                                        surroundings))
         return str(target)
+
+    def save_orbit(self, name="orbit.mp4", frames=300, fps=30.0, degrees=360.0, swing=False, yaw=-25.0, pitch=20.0,
+                   width=720, height=720, samples=128, light="Golden hour", model: Model | None = None, look="none",
+                   surroundings=None):
+        """An orbit animation in the outputs folder (name ends .mp4, .gif or .webp): the camera turns about
+        the model from yaw and pitch by `degrees` (animation.orbit_angles: a full turn from there, or an arc
+        centred there; swing goes out and back) in `frames` frames at `fps`, each frame a still of `samples`
+        per pixel with its magic lights at that frame's moment, finished with `look`; surroundings as in
+        render_png."""
+        import animation
+        model = model or self.model
+        max_width, max_height, max_samples, max_frames = animation.ORBIT_LIMITS
+        if not (16 <= width <= max_width and 16 <= height <= max_height and 1 <= samples <= max_samples
+                and 2 <= frames <= max_frames):
+            raise ValueError(f"width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}, "
+                             f"frames 2-{max_frames}")
+        target = (OUTPUTS / name).resolve()
+        if not target.is_relative_to(OUTPUTS.resolve()):
+            raise ValueError("Animations are saved inside the editor's outputs folder.")
+        animation.check_path(target)
+        if look not in LOOKS:
+            raise ValueError(f"Unknown look {look!r}: one of {', '.join(LOOKS)}.")
+        self._render(yaw, pitch, 16, 16, 1, light, model, None, "none", PICTURE_LIMITS, surroundings)  # engine, model, light
+        engine = self._engine
+        views = animation.orbit_views(*engine.orbit_camera(yaw, pitch), engine.centre, frames, degrees, swing)
+        writer = animation.FrameWriter(target, width, height, fps, frames)
+        try:
+            for i, view in enumerate(views):
+                engine.capture_time(i / fps)
+                rgba = engine.render_camera(width, height, *view, samples)
+                writer.add(finish(rgba[..., :3].copy(), look))
+            writer.close()
+        except BaseException:
+            writer.abort()
+            raise
+        finally:
+            engine.capture_time(0)
+        return {"path": str(target), "frames": frames, "seconds": round(frames / fps, 2), "width": width,
+                "height": height, "samples": samples}
 
     def close(self):
         if self._engine is not None:

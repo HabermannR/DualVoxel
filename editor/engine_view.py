@@ -21,7 +21,8 @@ from voxel_renderer import VoxelRenderer, style_of  # noqa: E402
 RELOAD_INTERVAL = 0.12
 SETTLED_SAMPLES = 256
 ANIMATED_FPS = 15
-ANIMATED_STYLES = {2, 3, 8, 9, 10, 11, 12, 13}  # staff field, water, the magic lights
+# staff field, water, the magic lights, and gas glowing in a magic light's pattern (the flame)
+ANIMATED_STYLES = {2, 3, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20}
 
 
 class EngineView:

@@ -1,7 +1,8 @@
 """The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, ellipsoid, stamp, or a sculpting
 brush: smooth, erode, grow) with its options, and mirroring, for the 3D edit view and the slices;
 MagicaVoxel's brush panel, plainer. The sculpting brushes reshape what is there in the size and shape set
-below, whatever the mode; Shift swaps erode and grow.
+below, whatever the mode, so while one is chosen no mode shows as chosen; Shift swaps erode and grow.
+Choosing a mode (its button or its key) goes back from a sculpting brush to the brush used before it.
 
 The window calls `install_brush_panel(window)` once, after its own docks.
 """
@@ -101,26 +102,38 @@ class BrushPanel(QtWidgets.QWidget):
             return widget
 
         row, self.mode_buttons = segmented([(t, f"{t.capitalize()}") for t in TOOLS],
-                                           {t: f"{MODE_TIPS[t]} ({TOOL_KEYS[t]})" for t in TOOLS}, doc.set_tool)
+                                           {t: f"{MODE_TIPS[t]} ({TOOL_KEYS[t]})" for t in TOOLS}, self._set_mode)
+        self._tool = doc.tool
+        self._last_brush = brush.kind if brush.kind not in SCULPT else "voxel"  # the brush a mode goes back to
         grid.addWidget(label("Mode"), 0, 0)
         grid.addLayout(row, 0, 1)
         self.mouse_label = QtWidgets.QLabel()
         self.mouse_label.setStyleSheet("color: #999")
         self.mouse_label.setToolTip("What the left button does in the 3D view and the slices; right drag orbits, "
                                     "middle drag pans")
+        paints_row, self.paint_buttons = segmented(
+            [("both", "Colour + material"), ("colour", "Colour"), ("material", "Material")],
+            {"both": "Painting gives voxels the current colour and material",
+             "colour": "Painting recolours voxels and leaves their materials",
+             "material": "Painting gives voxels the current material and leaves their colours (the edit views "
+                         "show materials meanwhile)"}, doc.set_paints)
         grid.addWidget(self.mouse_label, 1, 1)
+        paints_label = label("Paints")
+        paints_label.setToolTip("What Paint (and Ctrl + left in Attach) changes; Attach always adds both")
+        grid.addWidget(paints_label, 2, 0)
+        grid.addLayout(paints_row, 2, 1)
         row, self.kind_buttons = segmented([("voxel", "Voxel"), ("face", "Face"), ("box", "Box"),
                                             ("ellipsoid", "Ellipsoid"), ("stamp", "Stamp")],
                                            KIND_TIPS, self._set_kind)
-        grid.addWidget(label("Brush"), 2, 0)
-        grid.addLayout(row, 2, 1)
+        grid.addWidget(label("Brush"), 3, 0)
+        grid.addLayout(row, 3, 1)
         sculpt_row, sculpt_buttons = segmented([(k, k.capitalize()) for k in SCULPT], KIND_TIPS, self._set_kind)
         group = self.kind_buttons["voxel"].group()
         for button in sculpt_buttons.values():
             group.addButton(button)  # one choice across both rows
         self.kind_buttons.update(sculpt_buttons)
-        grid.addWidget(label("Sculpt"), 3, 0)
-        grid.addLayout(sculpt_row, 3, 1)
+        grid.addWidget(label("Sculpt"), 4, 0)
+        grid.addLayout(sculpt_row, 4, 1)
 
         # the voxel brush's options
         voxel = QtWidgets.QWidget()
@@ -173,7 +186,7 @@ class BrushPanel(QtWidgets.QWidget):
         self.options.addWidget(note(KIND_TIPS["box"] + "."))
         self.options.addWidget(ellipsoid)
         self.options.addWidget(self.stamp_note)
-        grid.addWidget(self.options, 4, 0, 1, 2)
+        grid.addWidget(self.options, 5, 0, 1, 2)
 
         row, self.mirror_buttons = QtWidgets.QHBoxLayout(), []
         row.setSpacing(0)
@@ -185,9 +198,9 @@ class BrushPanel(QtWidgets.QWidget):
             button.toggled.connect(self._set_mirror)
             row.addWidget(button)
             self.mirror_buttons.append(button)
-        grid.addWidget(label("Mirror"), 5, 0)
-        grid.addLayout(row, 5, 1)
-        grid.setRowStretch(6, 1)
+        grid.addWidget(label("Mirror"), 6, 0)
+        grid.addLayout(row, 6, 1)
+        grid.setRowStretch(7, 1)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
 
         brush.changed.connect(self.refresh)
@@ -195,20 +208,45 @@ class BrushPanel(QtWidgets.QWidget):
         self.refresh()
 
     def _set_kind(self, kind):
+        if kind in SCULPT and self.doc.tool in ("pick", "protect"):  # where a sculpting brush would do nothing
+            self.doc.set_tool("attach")
         if kind == "stamp" and self.brush.stamp is None:
             self.refresh()  # nothing to stamp yet: the note says how
             self.options.setCurrentIndex(PAGES.index("stamp"))
             return
         self.brush.set(kind=kind)
 
+    def _set_mode(self, tool):
+        """A mode chosen: its strokes, so a sculpting brush gives way to the brush used before it."""
+        self.doc.set_tool(tool)
+        if self.brush.kind in SCULPT:
+            self.brush.set(kind=self._last_brush)
+        self.refresh()
+
     def _set_mirror(self):
         self.brush.set(mirror=[b.isChecked() for b in self.mirror_buttons])
 
     def refresh(self):
         b = self.brush
-        self.mode_buttons[self.doc.tool].setChecked(True)
         tool = self.doc.tool
-        if tool == "pick":
+        if tool != self._tool:  # a mode's key while sculpting: back to painting, attaching, ...
+            self._tool = tool
+            if b.kind in SCULPT:
+                self.brush.set(kind=self._last_brush)  # refreshes again
+                return
+        if b.kind not in SCULPT:
+            self._last_brush = b.kind
+        self.paint_buttons[self.doc.paints].setChecked(True)
+        modes = self.mode_buttons[tool].group()
+        modes.setExclusive(False)  # none shows as chosen while a sculpting brush ignores the mode
+        for name, button in self.mode_buttons.items():
+            button.setChecked(name == tool and b.kind not in SCULPT)
+        modes.setExclusive(True)
+        if b.kind in SCULPT:
+            swapped = {"erode": "grow", "grow": "erode"}.get(b.kind)
+            self.mouse_label.setText(f"Left: {b.kind}" + (f" · Shift: {swapped}" if swapped else "") +
+                                     " · Alt: pick")
+        elif tool == "pick":
             self.mouse_label.setText("Left: pick")
         elif tool == "protect":
             self.mouse_label.setText("Left: protect · Shift: unprotect · Alt: pick")
