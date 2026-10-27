@@ -29,12 +29,14 @@ such as rust patches, scratches or worn edges are painted voxel by voxel with
 rust, worn metal, scratched metal, worn leather and so on.
 Gas (smoke, steam, mist, glowing gas, flame: group `gas`) is a volume, not a
 surface. Light crosses its boundary unbent and scatters inside, once per
-**density** voxels on average, taking the voxel colour; **anisotropy** above 0
+**density** voxels on average; the voxel colour is how a thick body of it
+looks (each scatter keeps the share of light that gives that colour in
+bulk, so white steam stays white however deep); **anisotropy** above 0
 sends that light on forward, so steam and mist glow toward the sun. Emission
 glows all through it, and the flame has the fire light's flicker (the view
 keeps drawing for it as for the magic lights). Solids inside
-or under gas keep their faces; two gases side by side draw as the one a ray
-entered first.
+or under gas keep their faces, and where two gases touch each keeps its own
+look (a ray passes from the one into the other).
 `..\palette\build_material_test.py` builds `assets\material_test.vx2` (one
 sphere per material) and renders it to `outputs\material_test.png`;
 `..\palette\build_field_sweep.py` sweeps each field. After a change to the

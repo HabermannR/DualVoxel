@@ -23,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 # 0..1 (the share of the remaining diffuse light that scatters under the surface), sheen 0..1 (a soft,
 # fuzzy brightening at grazing angles: cloth, moss, dust) and anisotropy -0.95..0.95 (gas only).
 # Gas (group "gas") is a volume, not a surface: light crosses its boundary unbent and scatters
-# inside, once per density voxels on average, taking the voxel colour; anisotropy above 0 sends that
+# inside, once per density voxels on average, a thick body of it looking the voxel colour; anisotropy above 0 sends that
 # light on forward (mist and steam glow toward the sun), below 0 back. Emission glows all through it,
 # with a magic light's pattern when it has one (flames).
 MATERIALS = [

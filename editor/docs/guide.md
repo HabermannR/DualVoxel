@@ -235,7 +235,7 @@ The **Materials** dock lists the materials by group: rough, glossy, metal, glowi
 
 > **Tip:** rust patches, scratches and worn edges are not textures. Paint them voxel by voxel with materials such as **rust**, **worn metal**, **scratched metal** and **worn leather**.
 
-**Gas** (smoke, steam, mist, glowing gas, flame) is a volume, not a surface: light passes into it and scatters inside, taking the voxel's colour, so mist glows where a lantern shines into it and smoke casts a soft shadow. **density** is how many voxels light travels on average before it scatters (low: thick smoke), **anisotropy** how much it scatters forward (mist and steam glow toward the sun), and **emission** makes it glow all through; the flame also flickers. Solids inside or under gas keep their faces.
+**Gas** (smoke, steam, mist, glowing gas, flame) is a volume, not a surface: light passes into it and scatters inside, so mist glows where a lantern shines into it and smoke casts a soft shadow. The voxel colour is how a thick body of the gas looks: white steam stays white however deep it is, dark smoke stays dark. Where two different gases touch, each keeps its own look. **density** is how many voxels light travels on average before it scatters (low: thick smoke), **anisotropy** how much it scatters forward (mist and steam glow toward the sun), and **emission** makes it glow all through; the flame also flickers. Solids inside or under gas keep their faces.
 
 <img src="figures/current_gas.png" width="480" alt="Mist, a fire with smoke and a glowing red haze at night">
 

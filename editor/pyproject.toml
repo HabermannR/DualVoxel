@@ -1,6 +1,6 @@
 [project]
 name = "dualvoxel"
-version = "0.3.0"
+version = "0.3.1"
 description = "DualVoxel: a voxel editor with two bytes per voxel, a colour and a material"
 requires-python = ">=3.13"
 dependencies = [
