@@ -1,6 +1,6 @@
 # The editor's tests on macOS and Linux, without the renderer (it ships for Windows only):
 # SKIP_GPU=1 leaves out the path-traced checks; the Qt window tests run on a real display
-# (the macOS runner's own, Xvfb on Linux).
+# (the macOS runner's own, Xvfb with Openbox on Linux).
 name: tests
 
 on:
@@ -27,7 +27,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+          sudo apt-get install -y xvfb openbox libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libdbus-1-3
       - run: uv sync --frozen
       - name: Tests (macOS)
@@ -35,4 +35,5 @@ jobs:
         run: .venv/bin/python -m unittest discover -s tests
       - name: Tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" .venv/bin/python -m unittest discover -s tests
+        # a window manager makes the editor's window the active one, so focus (and undo by focus) works
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" sh -c 'openbox & sleep 2; .venv/bin/python -m unittest discover -s tests'
