@@ -26,7 +26,7 @@ The technical side of DualVoxel. For everyday use, read the [guide](guide.md) fi
 
 ## Setup: the renderer and local settings
 
-Install the Python environment in the `editor` folder with `uv sync` (it creates `.venv`).
+Install the Python environment in the `editor` folder with `uv sync` (it creates `.venv` with Python 3.13, which `.python-version` names: VTK 9.5 has no wheels for newer Pythons).
 
 The Render dock, `render` in the API and the render scripts use a GPU path tracer that ships as a binary: `VoxelRenderer.dll` with `trace.spv` and `rr_io.spv`, on Windows with a Vulkan GPU that has hardware ray tracing. NVIDIA's DLSS files (`nvngx_dlssd.dll`) are optional: with them the picture is denoised by DLSS Ray Reconstruction; without them the renderer accumulates samples and the Render dock says *no DLSS*.
 
