@@ -44,7 +44,7 @@ or double-click `run_qt_editor.cmd` (on macOS: `sh run_qt_editor.sh`, or `.venv/
 1. **File → New…** (`Ctrl+N`). Give the size in voxels (up to 256 a side) and how it starts. **Filled**, the default, fills the whole box, as MagicaVoxel does: you can erase, carve and paint at any height straight away. **Floor** fills only some layers at the bottom, for a diorama. **Empty** starts with nothing, so you build up from the floor. Filled voxels take the current colour and material.
 2. Click a colour in the **Colours** dock and a material in the **Materials** dock. **matte** is the plain one.
 3. In the **Brush** dock choose **Attach** and **Voxel**, and a size.
-4. Draw in the 3D edit view with the left mouse button. Right drag turns the view, middle drag moves it, the wheel zooms.
+4. Draw in the 3D edit view with the left mouse button. Right drag turns the view, middle drag moves it (on a trackpad: Shift + right drag), the wheel zooms.
 5. **File → Save** (`Ctrl+S`). Pick a place and a name; the dialog starts in `assets/`. The model is saved as a `.vx2` with a MagicaVoxel copy: in `export/<name>.vox` for a model in `assets/`, else a `.vox` beside the `.vx2`.
 
 > **Tip:** the 3D edit view is for drawing. It shows flat colours so every voxel is easy to hit. Judge how the model *looks* in the Render dock.
@@ -284,7 +284,7 @@ To get a feel for it: pick a material, set roughness to 0.2 and watch the Render
 
 The Render dock shows the model in a GPU path tracer, standing on a wooden table. The picture starts noisy and settles within a second or two; the number at the bottom right counts the samples so far.
 
-- Drag to turn, middle drag to move, wheel to zoom, double click to frame the model.
+- Drag to turn, middle drag or Shift + drag to move, wheel to zoom, double click to frame the model.
 - Every edit, material change and light change shows at once.
 - A hidden or closed Render dock draws nothing and costs nothing.
 - Models with animated glows keep drawing, since they move.

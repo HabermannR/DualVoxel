@@ -8,7 +8,8 @@ selected one moves it over its floor. The arrow keys move it relative to the
 view (Up away from you), Page Up / Page Down up and down (Shift: 8 voxels), R
 turns it a quarter turn about z (Shift+R back), M mirrors it left-right as seen,
 Ctrl+D makes a linked copy, Del deletes, Enter or a double click edits its
-model. Drag elsewhere orbits, middle drag pans, the wheel zooms.
+model. Drag elsewhere orbits, middle drag or Shift + right drag pans (VTK's trackball pans
+when Shift is down), the wheel zooms.
 """
 from __future__ import annotations
 
@@ -92,7 +93,7 @@ class SceneView(QtWidgets.QWidget):
             "Click selects an instance · drag it to move it · arrows move it as seen (Up: away), "
             f"Page Up / Page Down: up and down, Shift: {BIG_STEP} voxels · R turns it (Shift+R back) · "
             "M mirrors it left-right · Ctrl+D linked copy · Del deletes · Enter or double click edits its model · "
-            "Ctrl+Z undoes · drag elsewhere: orbit · middle drag: pan · wheel: zoom")
+            "Ctrl+Z undoes · drag elsewhere: orbit · middle drag or Shift + right drag: pan · wheel: zoom")
         self.picker = vtkCellPicker()
         self.picker.SetTolerance(0.0005)
         self.picker.PickFromListOn()

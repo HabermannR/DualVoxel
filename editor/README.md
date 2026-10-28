@@ -69,8 +69,9 @@ render dock.
   two: Shift swaps attach and erase (in Paint mode it erases), Ctrl paints (in
   Paint mode it attaches); Alt + left picks colour and material. The Brush dock
   shows the current mapping, and the 3D preview follows the keys as you press
-  them. Right drag orbits, middle drag pans, the wheel zooms (the 3D view and
-  the scene view; the slices' wheel moves the layer).
+  them. Right drag orbits, middle drag pans (Shift + right drag too, for
+  trackpads), the wheel zooms (the 3D view and the scene view; the slices'
+  wheel moves the layer).
 - **Brush** (a dock at the top right, as MagicaVoxel's brush panel; it acts
   in the 3D view and the slices). **Mode:** Attach (A) adds voxels against the clicked face
   or the floor and only fills empty ones, Paint (B) gives voxels that are
@@ -185,7 +186,7 @@ render dock.
   the same and every material it knows keeps its id and name. Until then the
   target keeps its own copies.
 - **Render:** drag orbits (the same way round as the 3D view), middle drag
-  pans, double click frames. Pause (in the Render setup dock, or F9) stops drawing
+  or Shift + drag pans, double click frames. Pause (in the Render setup dock, or F9) stops drawing
   and frees the GPU, keeping the last picture; edits made meanwhile show on
   resume. A hidden or closed render dock draws nothing.
 - **Light** (a tab beside Brush): a preset to start from, Golden hour and

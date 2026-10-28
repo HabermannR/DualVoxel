@@ -38,7 +38,7 @@ Gas is a volume that light passes through and scatters in. Below, mist lies betw
 
 ## Getting started
 
-The editor is Python (PySide6, VTK) and has only been run on Windows so far. On macOS 13 or newer it should install and run as it does on Windows, untested and without the render view: the renderer ships for Windows only (see the [reference](editor/docs/reference.md#setup-the-renderer-and-local-settings)). The render view needs Windows and a Vulkan GPU with hardware ray tracing:
+The editor is Python (PySide6, VTK) and runs on Windows, macOS 13 or newer and Linux; its tests run on macOS and Linux with every push. Outside Windows it works without the render view, since the renderer ships for Windows only (see the [reference](editor/docs/reference.md#setup-the-renderer-and-local-settings)). Day-to-day use has so far been on Windows; if something feels wrong on a Mac, please open an issue. The render view needs Windows and a Vulkan GPU with hardware ray tracing:
 
 - **NVIDIA RTX:** the picture is denoised by DLSS Ray Reconstruction, so it is clean while you move.
 - **Other ray-tracing GPUs** (AMD RX 6000 or newer, Intel Arc): the renderer falls back to an accumulating preview that is noisy while you move and sharpens within seconds once the view is still. This path has not yet been tested on AMD or Intel cards.

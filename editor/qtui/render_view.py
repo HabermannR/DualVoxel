@@ -1,6 +1,6 @@
 """The model in the path tracer (VoxelRenderer.dll), live, at the dock's size.
 
-Left or right drag orbits, middle drag pans, the wheel zooms, a double click
+Left or right drag orbits, middle drag or Shift + drag pans, the wheel zooms, a double click
 frames the model. Pause (the Light dock's button, or F9) stops drawing and frees
 the GPU; the last picture stays. Tilt blur (the Light dock) switches the
 tilt-shift band on and off. A hidden or closed render dock draws nothing either. The engine starts after the
@@ -417,7 +417,10 @@ class RenderView(QtWidgets.QWidget):
         if self.preview is not None:  # grabbing the view takes it back from the preview, where it is now
             self.preview = None
             self.preview_changed.emit(False)
-        self.drag = (event.button(), event.position())
+        button = event.button()
+        if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            button = QtCore.Qt.MouseButton.MiddleButton  # Shift + drag pans: a trackpad has no middle button
+        self.drag = (button, event.position())
 
     def mouseMoveEvent(self, event):
         if self.drag is None:

@@ -6,7 +6,7 @@ in the path tracer.
 The mouse, as in MagicaVoxel: a left click or drag applies the brush (qtui/brush.py,
 set in the Brush dock) in the current mode; Shift + left and Ctrl + left use the
 other two modes (brush.mode_for), Alt + left picks. Right drag orbits, middle
-drag pans, the wheel zooms (Alt + Shift + wheel: the brush size). Attach adds voxels against the clicked face (or on the floor) and only
+drag or Shift + right drag pans (for trackpads), the wheel zooms (Alt + Shift + wheel: the brush size). Attach adds voxels against the clicked face (or on the floor) and only
 fills empty ones, paint recolours solid voxels, erase removes them, pick takes a
 voxel's colour and material, protect marks voxels the assistant may not change
 (tinted violet; Shift lifts it). Brushes: voxel (size, square or circle, flat or a
@@ -150,7 +150,8 @@ def touched_chunks(changed_zyx: np.ndarray, chunk: int = CHUNK) -> set[tuple[int
 
 class EditStyle(vtkInteractorStyleTrackballCamera):
     """MagicaVoxel's mouse: left draws (the mode; Shift, Ctrl and Alt pick another), right drag orbits, middle
-    drag pans, the wheel zooms.
+    drag pans, the wheel zooms. Right drag is the trackball's left button, which pans when Shift is down,
+    so Shift + right drag pans too (a trackpad has no middle button).
 
     PyVistaQt's widget remembers one active button: a right click during a left drag makes the left release
     arrive as a right release, so the stroke would never end and the view would stop orbiting. The style
@@ -253,10 +254,11 @@ class EditView(QtWidgets.QWidget):
         frame_button.clicked.connect(self.frame)
         bar = QtWidgets.QHBoxLayout()
         bar.setContentsMargins(4, 2, 4, 2)
-        hint = QtWidgets.QLabel("Left: mode · Shift/Ctrl: the others · Alt: pick · right: orbit · middle: pan")
+        hint = QtWidgets.QLabel("Left: mode · Shift/Ctrl: the others · Alt: pick · right: orbit · "
+                                "middle or Shift + right: pan")
         hint.setToolTip("Left click or drag: the brush in the current mode · Shift + left and Ctrl + left: the "
                         "other two modes (the Brush dock shows which) · Alt + left: pick colour and material · "
-                        "right drag: orbit · middle drag: pan · wheel: zoom · [ and ], Alt + Shift + wheel: brush size · R: turn the "
+                        "right drag: orbit · middle drag or Shift + right drag: pan · wheel: zoom · [ and ], Alt + Shift + wheel: brush size · R: turn the "
                         "stamp · Esc: stop stamping · arrows, Page Up / Down: shift the model in its box as seen "
                         f"(Shift: {BIG_STEP} voxels)")
         hint.setStyleSheet("color: #999")
