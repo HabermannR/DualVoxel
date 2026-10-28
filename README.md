@@ -38,7 +38,7 @@ Gas is a volume that light passes through and scatters in. Below, mist lies betw
 
 ## Getting started
 
-The editor is Python (PySide6, VTK) and has only been run on Windows so far. The render view needs Windows and a Vulkan GPU with hardware ray tracing:
+The editor is Python (PySide6, VTK) and has only been run on Windows so far. On macOS 13 or newer it should install and run as it does on Windows, untested and without the render view: the renderer ships for Windows only (see the [reference](editor/docs/reference.md#setup-the-renderer-and-local-settings)). The render view needs Windows and a Vulkan GPU with hardware ray tracing:
 
 - **NVIDIA RTX:** the picture is denoised by DLSS Ray Reconstruction, so it is clean while you move.
 - **Other ray-tracing GPUs** (AMD RX 6000 or newer, Intel Arc): the renderer falls back to an accumulating preview that is noisy while you move and sharpens within seconds once the view is still. This path has not yet been tested on AMD or Intel cards.
@@ -79,6 +79,8 @@ The editor's MCP server gives an assistant such as Claude the same model the edi
   }
 }
 ```
+
+On macOS the command is `/path/to/DualVoxel/editor/.venv/bin/python` and the script `/path/to/DualVoxel/editor/mcp_server.py`.
 
 The same functions are available from Python (`headless_api.VoxelEditor`) and the command line (`editor_cli.py`); the [reference](editor/docs/reference.md#python-api-command-line-and-mcp-server) lists them.
 

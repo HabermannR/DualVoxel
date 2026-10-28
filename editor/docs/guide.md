@@ -33,7 +33,7 @@ Start the editor from the `editor` folder, optionally with a model to open:
 .venv\Scripts\python.exe qt_editor.py ..\assets\corpse.vx2
 ```
 
-or double-click `run_qt_editor.cmd`. The window opens at once. The first time, the Render dock takes about half a minute before the picture appears while the renderer prepares itself. (The [reference](reference.md#setup-the-renderer-and-local-settings) says how to install the editor and where it finds the renderer.)
+or double-click `run_qt_editor.cmd` (on macOS: `sh run_qt_editor.sh`, or `.venv/bin/python qt_editor.py ../assets/corpse.vx2`). The window opens at once. The first time, the Render dock takes about half a minute before the picture appears while the renderer prepares itself. (The [reference](reference.md#setup-the-renderer-and-local-settings) says how to install the editor and where it finds the renderer.)
 
 ![The whole editor](figures/current_desktop.png)
 

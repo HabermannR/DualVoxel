@@ -48,7 +48,7 @@ tables needs them sent: File → Send tables).
 
     .venv\Scripts\python.exe qt_editor.py [model.vx2 | model.vox]
 
-or double-click `run_qt_editor.cmd`. The first start takes about half a minute
+or double-click `run_qt_editor.cmd` (on macOS: `sh run_qt_editor.sh`). The first start takes about half a minute
 before the render appears: the engine builds its shaders and DLSS once. The
 model in movable docks (PySide6 with the Qt
 Advanced Docking System, as in PythonFEM's CAE): Front, Side and Top slices,
@@ -291,7 +291,7 @@ brush state) and `qtui\brush_panel.py` (the dock).
 
     .venv\Scripts\python.exe editor_cli.py inspect|preview|render|edit <model> [--light Overcast] [--operations ops.json --save name]
 
-`run_mcp.cmd` starts the stdio MCP server (`mcp.example.json` has the client
+`run_mcp.cmd` (`run_mcp.sh` on macOS) starts the stdio MCP server (`mcp.example.json` has the client
 entry). Its 30 tools draw (boxes, round shapes, lines, single voxels,
 mirror, copy), set materials, read layers back, protect, undo, and show the
 model as a flat preview or a path-traced render; `docs/reference.md` lists

@@ -20,6 +20,7 @@ import json
 import os
 import secrets
 import socket
+import sys
 import tempfile
 import threading
 import zlib
@@ -30,8 +31,17 @@ import numpy as np
 from headless_api import VoxelEditor, synchronized
 from core.model import Model
 
+def _app_dir() -> Path:
+    """The per-user folder the link file lives in: %LOCALAPPDATA% on Windows, Application Support on macOS."""
+    if os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"])
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
+
+
 LINK_FILE = Path(os.environ.get("DUALVOXEL_LINK_FILE")  # tests use their own
-                 or Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "DualVoxel" / "live_link.json")
+                 or _app_dir() / "DualVoxel" / "live_link.json")
 TIMEOUT = 60  # seconds an answer may take (a big model's copy, an editor busy with a dialog)
 
 

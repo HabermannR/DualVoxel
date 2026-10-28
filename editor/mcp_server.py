@@ -9,19 +9,20 @@ The server edits a model of its own, or, after connect_editor, the model open
 in the editor window (live_link.py): the user watches each edit there and can
 edit alongside. Pictures of the window's model are drawn here from a copy.
 """
-import ctypes
 import io
-import msvcrt
 import os
 import sys
 
 # The protocol owns standard output. The renderer DLL (C++) prints status lines
 # to it, so keep a private copy of the real output for MCP and point the
-# process's standard output, at both the C runtime and the Windows handle,
-# at stderr before the engine loads.
+# process's standard output, at both the C runtime and (on Windows) the
+# Windows handle, at stderr before the engine loads.
 _protocol_out = os.dup(1)
 os.dup2(2, 1)
-ctypes.windll.kernel32.SetStdHandle(-11, msvcrt.get_osfhandle(2))  # STD_OUTPUT_HANDLE
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt
+    ctypes.windll.kernel32.SetStdHandle(-11, msvcrt.get_osfhandle(2))  # STD_OUTPUT_HANDLE
 sys.stdout = io.TextIOWrapper(os.fdopen(_protocol_out, "wb"), encoding="utf-8", write_through=True)
 
 from mcp.server.fastmcp import FastMCP, Image  # noqa: E402

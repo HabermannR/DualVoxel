@@ -55,7 +55,10 @@ def material_fields(m: dict) -> list[float]:
             float(m.get("density", 4)), float(m.get("sheen", 0)), float(m.get("anisotropy", 0))]
 
 
-DLL_NAMES = ("VoxelRenderer.dll", "SpellRenderer.dll")  # the second: builds before the neutral name
+if sys.platform == "win32":
+    DLL_NAMES = ("VoxelRenderer.dll", "SpellRenderer.dll")  # the second: builds before the neutral name
+else:  # no build for macOS or Linux yet: the editor runs without the Render dock there
+    DLL_NAMES = ("libVoxelRenderer.dylib" if sys.platform == "darwin" else "libVoxelRenderer.so",)
 # MSVC's exception code: a C++ exception left a renderer build from before renderer_last_error.
 CPP_EXCEPTION = 0xE06D7363
 REQUIREMENTS = ("The renderer needs a GPU with hardware ray tracing under Vulkan 1.3 (NVIDIA RTX 20 or newer, "
@@ -66,10 +69,14 @@ class VoxelRenderer:
     def __init__(self, bin_dir: Path | None = None):
         bin_dir = Path(bin_dir) if bin_dir else local_config.renderer_dir()
         dll = next((bin_dir / name for name in DLL_NAMES if (bin_dir / name).exists()), None)
+        if dll is None and sys.platform != "win32":
+            raise FileNotFoundError(f"The renderer ships for Windows only so far (no {DLL_NAMES[0]} in "
+                                    f"{bin_dir}); everything else in the editor works without it.")
         if dll is None:
             raise FileNotFoundError(f"The renderer is missing: no {DLL_NAMES[0]} in {bin_dir}. Put the "
                                     f"renderer's files there, or set renderer_path in {local_config.CONFIG}.")
-        os.add_dll_directory(str(bin_dir))
+        if sys.platform == "win32":
+            os.add_dll_directory(str(bin_dir))
         self.dll = ctypes.CDLL(str(dll))
         d = self.dll
         d.render_frame.restype = _I
@@ -267,7 +274,7 @@ class VoxelRenderer:
         try:
             done = self.dll.render_frame(*args)
         except OSError as error:
-            if (error.winerror or 0) & 0xFFFFFFFF != CPP_EXCEPTION:
+            if (getattr(error, "winerror", None) or 0) & 0xFFFFFFFF != CPP_EXCEPTION:
                 raise
             raise RuntimeError("The renderer failed; this renderer build does not say why (a newer one does). "
                                + REQUIREMENTS) from None
