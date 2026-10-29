@@ -87,9 +87,9 @@ class SharedEditor(VoxelEditor):
     for a model (a bool plane, z y x) or None."""
 
     EDITS = ("paint_box", "erase_box", "shape_slice", "set_material_box", "set_material_for_colour",
-             "replace_colour", "fill_shape", "draw_line", "set_voxels", "mirror", "copy_box", "protect_box",
+             "replace_colour", "fill_shape", "draw_line", "flood_fill", "set_voxels", "mirror", "copy_box", "protect_box",
              "clear_protection", "speckle", "noise_terrain", "erode_surface", "scatter", "cloud", "place_model",
-             "resize_model", "fit_model", "shift_model", "rotate_model", "flip_model")
+             "resize_model", "fit_model", "shift_model", "rotate_model", "flip_model", "import_views")
     QUESTIONS = ("info", "materials", "read_slice", "voxels_in_box")
 
     def __init__(self, current, locked, window=None):

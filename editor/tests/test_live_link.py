@@ -258,7 +258,7 @@ class LinkTests(unittest.TestCase):
             async with stdio_client(params) as (reader, writer):
                 async with ClientSession(reader, writer) as client:
                     await client.initialize()
-                    self.assertEqual(len((await client.list_tools()).tools), 52)
+                    self.assertEqual(len((await client.list_tools()).tools), 58)
                     hello = await client.call_tool("connect_editor", {})
                     self.assertFalse(hello.isError, hello.content)
                     painted = await client.call_tool("paint_box", {"start": [0, 0, 0], "end": [5, 5, 0], "colour": 54})

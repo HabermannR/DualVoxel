@@ -317,6 +317,16 @@ class Document(QtCore.QObject):
         self._protection.pop(self.model, None)
         self._model_switched()
 
+    def load_planes(self, colour: np.ndarray, material: np.ndarray) -> None:
+        """A new, unsaved model holding these (z, y, x) planes (File > Import voxel PNG's slice sheets); through
+        new(), so a project's part on show stays as it is."""
+        z, y, x = colour.shape
+        self.new(x, y, z)
+        self.model.colour[:] = colour
+        self.model.material[:] = np.where(colour > 0, material, 0)
+        self.model.version += 1
+        self.changed.emit()
+
     def edit_model(self, model: Model) -> None:
         """Show and edit this Model itself (a project's model, so its instances follow every edit)."""
         self._before = None

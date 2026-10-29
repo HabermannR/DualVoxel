@@ -1,4 +1,4 @@
-"""The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, ellipsoid, stamp, or a sculpting
+"""The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, ellipsoid, line, fill, stamp, or a sculpting
 brush: smooth, erode, grow) with its options, and mirroring, for the 3D edit view and the slices;
 MagicaVoxel's brush panel, plainer. The sculpting brushes reshape what is there in the size and shape set
 below, whatever the mode, so while one is chosen no mode shows as chosen; Shift swaps erode and grow.
@@ -13,7 +13,7 @@ from PySide6 import QtCore, QtWidgets
 
 from core.brushes import MAX_SIZE
 from core.scene import placed_size
-from qtui.brush import SCULPT, mode_for
+from qtui.brush import MAX_TOLERANCE, SCULPT, mode_for
 from qtui.document import TOOLS
 from qtui.palette_panel import TOOL_KEYS
 
@@ -29,12 +29,23 @@ KIND_TIPS = {
     "box": "Drag a rectangle in the clicked layer (a click: one voxel)",
     "ellipsoid": "Drag a rectangle on a face: the ellipsoid over it. Attach rests it on the face, paint and "
                  "erase sink it in (in a slice: centred on the layer)",
+    "line": "Drag from one voxel to another: a straight line between them, as thick as the size and shape below",
+    "fill": "Click a voxel: the area connected to it. Paint and erase take the voxels of its colour; attach "
+            "fills an enclosed hollow (never the space around the model)",
     "stamp": "A project's model: select it in the Project dock, then Use as brush",
     "smooth": "Rounds off what is in the brush: fills hollows, takes off bumps",
     "erode": "Takes the outer skin of voxels off what is in the brush (Shift: grow)",
     "grow": "Adds a skin of voxels to what is in the brush, in the colours beside it (Shift: erode)",
 }
-PAGES = ("voxel", "face", "box", "ellipsoid", "stamp")  # the options shown for each brush kind
+PAGES = ("voxel", "face", "box", "ellipsoid", "stamp", "fill")  # the options shown for each brush kind
+SIZED = (*SCULPT, "line")  # kinds that take the voxel brush's size and shape (its page)
+SCOPE_TIPS = {"connected": "The area connected to the clicked voxel, in 3D",
+              "layer": "Only in the clicked voxel's layer, across the clicked face (in a slice: the slice's layer)",
+              "model": "Every matching voxel in the model, connected or not (paint and erase; attach stays "
+                       "connected)"}
+MATCH_TIPS = {"colour": "Voxels of the clicked voxel's colour (or within the tolerance of it)",
+              "colour and material": "Voxels of its colour and its material",
+              "solid": "Any solid voxel: the whole connected piece"}
 MODE_TIPS = {"attach": "Add voxels against the clicked face; never overwrites",
              "paint": "Recolour voxels that are there", "erase": "Remove voxels",
              "pick": "Take a voxel's colour and material",
@@ -66,6 +77,16 @@ def install_brush_panel(window) -> "BrushPanel":
             window.default_layout = window.dock_manager.saveState(window_module.LAYOUT_VERSION)
     QtCore.QTimer.singleShot(100, panel, fit)  # not once the window has gone
     return panel
+
+
+class HalfSpinBox(QtWidgets.QDoubleSpinBox):
+    """A coordinate in half voxels, shown as 12 or 12.5; its lowest value (-0.5) reads "centre"."""
+
+    def __init__(self):
+        super().__init__(decimals=1, singleStep=0.5, minimum=-0.5, specialValueText="centre")
+
+    def textFromValue(self, value):
+        return f"{value:g}"
 
 
 def segmented(options, tips, on_click):
@@ -123,7 +144,8 @@ class BrushPanel(QtWidgets.QWidget):
         grid.addWidget(paints_label, 2, 0)
         grid.addLayout(paints_row, 2, 1)
         row, self.kind_buttons = segmented([("voxel", "Voxel"), ("face", "Face"), ("box", "Box"),
-                                            ("ellipsoid", "Ellipsoid"), ("stamp", "Stamp")],
+                                            ("ellipsoid", "Ellipsoid"), ("line", "Line"), ("fill", "Fill"),
+                                            ("stamp", "Stamp")],
                                            KIND_TIPS, self._set_kind)
         grid.addWidget(label("Brush"), 3, 0)
         grid.addLayout(row, 3, 1)
@@ -179,6 +201,34 @@ class BrushPanel(QtWidgets.QWidget):
         options.addWidget(note(KIND_TIPS["ellipsoid"] + "."), 1, 0, 1, 3)
         options.setColumnStretch(2, 1)
 
+        # the fill brush's reach, what it spreads through, and how near a colour counts
+        fill = QtWidgets.QWidget()
+        options = QtWidgets.QGridLayout(fill)
+        options.setContentsMargins(0, 0, 0, 0)
+        scope_row, self.scope_buttons = segmented([("connected", "Connected"), ("layer", "Layer"),
+                                                   ("model", "Whole model")], SCOPE_TIPS,
+                                                  lambda v: self.brush.set(fill_scope=v))
+        match_row, self.match_buttons = segmented([("colour", "Colour"), ("colour and material", "+ material"),
+                                                   ("solid", "Any")], MATCH_TIPS,
+                                                  lambda v: self.brush.set(fill_match=v))
+        self.diagonal_box = QtWidgets.QCheckBox("Diagonal")
+        self.diagonal_box.setToolTip("Voxels touching only at an edge or a corner count as connected too")
+        self.diagonal_box.toggled.connect(lambda on: self.brush.set(fill_diagonal=on))
+        self.tolerance_box = QtWidgets.QDoubleSpinBox(minimum=0, maximum=MAX_TOLERANCE, decimals=0,
+                                                      specialValueText="exact", prefix="ΔE ")
+        self.tolerance_box.setToolTip("Colours this close to the clicked one (CIEDE2000) fill with it; "
+                                      "exact: its colour only")
+        self.tolerance_box.valueChanged.connect(lambda v: self.brush.set(fill_tolerance=v))
+        options.addWidget(label("Reach"), 0, 0)
+        options.addLayout(scope_row, 0, 1, 1, 2)
+        options.addWidget(label("Match"), 1, 0)
+        options.addLayout(match_row, 1, 1, 1, 2)
+        options.addWidget(self.tolerance_box, 2, 1)
+        options.addWidget(self.diagonal_box, 2, 2)
+        options.addWidget(note("Attach fills an enclosed hollow; one open to the box's sides (the floor "
+                               "closes it) is left alone."), 3, 0, 1, 3)
+        options.setColumnStretch(1, 1)
+
         self.stamp_note = note()
         self.options = QtWidgets.QStackedWidget()
         self.options.addWidget(voxel)
@@ -186,13 +236,15 @@ class BrushPanel(QtWidgets.QWidget):
         self.options.addWidget(note(KIND_TIPS["box"] + "."))
         self.options.addWidget(ellipsoid)
         self.options.addWidget(self.stamp_note)
+        self.options.addWidget(fill)
         grid.addWidget(self.options, 5, 0, 1, 2)
 
         row, self.mirror_buttons = QtWidgets.QHBoxLayout(), []
         row.setSpacing(0)
         for axis in "XYZ":
             button = QtWidgets.QToolButton(text=axis, checkable=True)
-            button.setToolTip(f"Repeat every edit mirrored across the model's centre in {axis.lower()}")
+            button.setToolTip(f"Repeat every edit mirrored in {axis.lower()}, across the plane set below "
+                              "(the model's centre by default)")
             button.setStyleSheet(SEGMENT_STYLE)
             button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
             button.toggled.connect(self._set_mirror)
@@ -200,11 +252,33 @@ class BrushPanel(QtWidgets.QWidget):
             self.mirror_buttons.append(button)
         grid.addWidget(label("Mirror"), 6, 0)
         grid.addLayout(row, 6, 1)
-        grid.setRowStretch(7, 1)
+        # where each axis mirrors: the centre, or a voxel coordinate in half steps (12: through voxel 12's
+        # centre, 12.5: between voxels 12 and 13)
+        row, self.plane_boxes, self.plane_pick_buttons = QtWidgets.QHBoxLayout(), [], []
+        row.setSpacing(2)
+        for a, axis in enumerate("xyz"):
+            box = HalfSpinBox()
+            box.setToolTip(f"The {axis} mirror's plane: centre (the model's), or an {axis} in half voxels "
+                           f"(12: through voxel 12, 12.5: between 12 and 13)")
+            box.valueChanged.connect(lambda v, a=a: self._set_plane(a, None if v < 0 else round(2 * v)))
+            pick = QtWidgets.QToolButton(text="⌖")
+            pick.setToolTip(f"Mirror {axis} through the voxel last picked (Alt + left), and turn it on")
+            pick.clicked.connect(lambda _=False, a=a: self.plane_to_picked(a))
+            row.addWidget(box, 1)
+            row.addWidget(pick)
+            if a < 2:
+                row.addSpacing(6)
+            self.plane_boxes.append(box)
+            self.plane_pick_buttons.append(pick)
+        grid.addWidget(label("Plane"), 7, 0)
+        grid.addLayout(row, 7, 1)
+        grid.setRowStretch(8, 1)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
 
         brush.changed.connect(self.refresh)
         doc.current_changed.connect(self.refresh)
+        doc.resized.connect(self.refresh)
+        doc.reset.connect(self.refresh)
         self.refresh()
 
     def _set_kind(self, kind):
@@ -225,6 +299,20 @@ class BrushPanel(QtWidgets.QWidget):
 
     def _set_mirror(self):
         self.brush.set(mirror=[b.isChecked() for b in self.mirror_buttons])
+
+    def _set_plane(self, axis: int, doubled):
+        planes = list(self.brush.mirror_plane)
+        planes[axis] = doubled
+        self.brush.set(mirror_plane=planes)
+
+    def plane_to_picked(self, axis: int):
+        """Mirror on this axis through the voxel last picked, the mirror turned on."""
+        if self.doc.picked is None:
+            return
+        self._set_plane(axis, 2 * self.doc.picked[axis])
+        mirror = list(self.brush.mirror)
+        mirror[axis] = True
+        self.brush.set(mirror=mirror)
 
     def refresh(self):
         b = self.brush
@@ -254,18 +342,32 @@ class BrushPanel(QtWidgets.QWidget):
             self.mouse_label.setText(f"Left: {tool} · Shift: {mode_for(tool, shift=True)} · "
                                      f"Ctrl: {mode_for(tool, ctrl=True)} · Alt: pick")
         self.kind_buttons[b.kind].setChecked(True)
-        page = "voxel" if b.kind in SCULPT else b.kind  # sculpting takes the voxel brush's size and shape
+        page = "voxel" if b.kind in SIZED else b.kind  # sculpting and lines take the voxel brush's size and shape
         self.options.setCurrentIndex(PAGES.index(page))
-        for widget, value in ((self.size_slider, b.size), (self.size_box, b.size), (self.height_box, b.height)):
+        for widget, value in ((self.size_slider, b.size), (self.size_box, b.size), (self.height_box, b.height),
+                              (self.tolerance_box, b.fill_tolerance)):
             widget.blockSignals(True)
             widget.setValue(value)
             widget.blockSignals(False)
+        self.scope_buttons[b.fill_scope].setChecked(True)
+        self.match_buttons[b.fill_match].setChecked(True)
+        self.diagonal_box.blockSignals(True)
+        self.diagonal_box.setChecked(b.fill_diagonal)
+        self.diagonal_box.blockSignals(False)
+        self.tolerance_box.setEnabled(b.fill_match != "solid")
         self.shape_buttons[b.round].setChecked(True)
         self.dims_buttons[b.volume].setChecked(True)
         for button, on in zip(self.mirror_buttons, b.mirror):
             button.blockSignals(True)
             button.setChecked(on)
             button.blockSignals(False)
+        for a, (box, pick) in enumerate(zip(self.plane_boxes, self.plane_pick_buttons)):
+            plane = b.mirror_plane[a]
+            box.blockSignals(True)
+            box.setRange(-0.5, self.doc.size[a] - 1)
+            box.setValue(-0.5 if plane is None else plane / 2)
+            box.blockSignals(False)
+            pick.setEnabled(self.doc.picked is not None)
         if b.stamp is None:
             self.stamp_note.setText("No stamp yet: select a model or an instance in the Project dock, then "
                                     "Use as brush.")

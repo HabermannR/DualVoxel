@@ -1,7 +1,7 @@
 """The model in the path tracer (VoxelRenderer.dll), live, at the dock's size.
 
-Left or right drag orbits, middle drag or Shift + drag pans, the wheel zooms, a double click
-frames the model. Pause (the Light dock's button, or F9) stops drawing and frees
+Left or right drag orbits, middle drag or Shift + drag pans, the wheel zooms (orthographic: the view
+narrows, as no eye comes nearer), a double click frames the model. Pause (the Light dock's button, or F9) stops drawing and frees
 the GPU; the last picture stays. Tilt blur (the Light dock) switches the
 tilt-shift band on and off. A hidden or closed render dock draws nothing either. The engine starts after the
 window shows (the first start builds shaders and DLSS and takes about half a
@@ -10,6 +10,7 @@ steps (the window stays responsive), showing its progress here.
 """
 from __future__ import annotations
 
+import copy
 import math
 import sys
 import time
@@ -30,6 +31,8 @@ class RenderView(QtWidgets.QWidget):
     still_changed = QtCore.Signal(bool)  # a picture started (True) or ended
     still_finished = QtCore.Signal(str, str)  # the saved file ("" when it failed or was cancelled), a message
     preview_changed = QtCore.Signal(bool)  # the orbit preview started (True) or stopped
+    ortho_changed = QtCore.Signal(bool)  # the camera went orthographic (True) or back to perspective
+    renderer_started = QtCore.Signal()  # the engine runs: what its build can do is known
 
     def __init__(self, doc):
         super().__init__()
@@ -73,6 +76,8 @@ class RenderView(QtWidgets.QWidget):
             return
         self.message = ""
         self.engine.renderer.tilt_blur(self.tilt_blur)
+        if self.camera.ortho and not self.engine.renderer.has_projection:
+            self.camera.set_ortho(False)  # an older renderer: perspective only
         self.engine.renderer.daylight(self.sun, self.sky)
         self.engine.renderer.golden_hour(self.golden)
         self.engine.renderer.light(self.custom_light is not None, self.custom_light)
@@ -85,6 +90,7 @@ class RenderView(QtWidgets.QWidget):
             apply_surroundings(self.engine.renderer, self.surroundings)
         if not self.paused:
             self._tick.start()
+        self.renderer_started.emit()
 
     def set_daylight(self, sun: float, sky: float):
         """The sun's and the sky's strength, 1 each the built-in light, 0 night (to judge glowing
@@ -126,6 +132,19 @@ class RenderView(QtWidgets.QWidget):
         if self.engine is not None:
             self.engine.renderer.tilt_blur(enabled)
             self.engine.samples = 0  # draw the new picture even when the old one had settled
+
+    @property
+    def has_ortho(self) -> bool:
+        """Whether the renderer can draw the orthographic view (one from before it cannot; none yet: assume so)."""
+        return self.engine is None or self.engine.renderer.has_projection
+
+    def set_ortho(self, ortho: bool):
+        """Parallel rays (no perspective: edges that are parallel stay so) or the perspective view."""
+        self.camera.set_ortho(ortho)
+        if self.engine is not None:
+            self.engine.samples = 0
+        self.ortho_changed.emit(self.camera.ortho)
+        self._moved()
 
     def set_paused(self, paused: bool):
         """Stop or resume drawing; while paused, edits, the camera and material changes wait."""
@@ -174,10 +193,12 @@ class RenderView(QtWidgets.QWidget):
         return self.engine.samples if self.engine is not None else 0
 
     # --- pictures of any size ------------------------------------------------------------
-    def render_still(self, path, width: int, height: int, samples: int, look: str = "none") -> str | None:
+    def render_still(self, path, width: int, height: int, samples: int, look: str = "none",
+                     ortho: bool | None = None) -> str | None:
         """Start a picture of what the dock shows (its camera, light and tilt blur, the model as it is now)
         at width x height, `samples` per pixel, saved as the PNG `path` with a finish from
-        postprocess.LOOKS. It draws in steps on this dock's ticks, while pausing and edits wait. Returns
+        postprocess.LOOKS; ortho: parallel rays or perspective (None: as the dock draws), the model as large
+        either way. It draws in steps on this dock's ticks, while pausing and edits wait. Returns
         why it cannot start, else None; still_finished tells how it ended."""
         from postprocess import LOOKS
         max_width, max_height, max_samples = STILL_LIMITS
@@ -189,12 +210,17 @@ class RenderView(QtWidgets.QWidget):
             return f"Width 16-{max_width}, height 16-{max_height}, samples 1-{max_samples}."
         if look not in LOOKS:
             return f"Unknown finish {look!r}: one of {', '.join(LOOKS)}."
+        if ortho and not self.has_ortho:
+            return "This renderer draws in perspective only; a newer one has the orthographic view."
         self.preview_orbit(None)  # the picture from the view, not from wherever the preview has swung
         self.engine.sync(self.drawn_model(), self.camera, force=True)
-        cam = self.camera
+        cam = copy.deepcopy(self.camera)
+        if ortho is not None:
+            cam.set_ortho(ortho)
         self.still = {"path": str(path), "look": look, "samples": int(samples), "done": 0, "shown": 0.0,
                       "rgba": np.zeros((height, width, 4), dtype=np.uint8),
-                      "view": [np.array(v, dtype=float) for v in (cam.pos, cam.fwd, cam.right, cam.up)]}
+                      "view": [np.array(v, dtype=float) for v in (cam.pos, cam.fwd, cam.right, cam.up)],
+                      "projection": (cam.ortho, cam.ortho_height)}
         self.engine.renderer.capture(int(samples))
         self._tick.start()  # also while paused: the picture was asked for
         self.still_changed.emit(True)
@@ -230,6 +256,7 @@ class RenderView(QtWidgets.QWidget):
         views = animation.orbit_views(cam.pos, cam.fwd, cam.right, cam.up, cam.target, frames, degrees, swing)
         self.still = {"path": str(path), "look": look, "samples": int(samples), "done": 0, "shown": 0.0,
                       "rgba": np.zeros((height, width, 4), dtype=np.uint8), "view": list(views[0]),
+                      "projection": (cam.ortho, cam.ortho_height),
                       "orbit": {"views": views, "index": 0, "writer": writer, "fps": float(fps)}}
         self.engine.renderer.capture_time(0)
         self.engine.renderer.capture(int(samples))
@@ -266,6 +293,7 @@ class RenderView(QtWidgets.QWidget):
     def _still_step(self):
         still = self.still
         try:
+            self.engine.renderer.projection(*still["projection"])  # the live frames may draw it otherwise
             still["done"] = self.engine.renderer.frame(still["rgba"], *still["view"], False)
         except Exception as error:  # a size the GPU cannot hold, a lost device
             self._end_still("", f"The picture failed: {error}")

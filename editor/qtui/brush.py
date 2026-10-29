@@ -5,10 +5,13 @@ Kinds, as in MagicaVoxel: voxel (a size and a shape: square or circle, flat
 across the clicked face or a volume, cube or sphere), face (the clicked face's
 connected flat area), box (drag a rectangle in one layer), ellipsoid (drag a
 rectangle: the ellipsoid over it, `height` layers tall, 0 the rectangle's
-shorter side) and stamp (a project's model, from the outliner's "Use as brush"); and the sculpting ones,
+shorter side), line (drag between two voxels: a line as thick as the voxel
+brush), fill (the connected area of the clicked voxel's colour, or an enclosed
+hollow; fill_region) and stamp (a project's model, from the outliner's "Use as brush"); and the sculpting ones,
 which reshape what is there within the voxel brush's size and shape: smooth,
 erode (peel the outer layer) and grow (add one; Shift swaps erode and grow).
-Mirror x / y / z repeats every edit across the model's centre. brush_edit()
+Mirror x / y / z repeats every edit across the model's centre, or across a plane
+set per axis (mirror_plane). brush_edit()
 says what a click writes, for the 3D view and the slices alike.
 
 The mouse, as in MagicaVoxel: the mode decides what a left click or drag does;
@@ -23,17 +26,19 @@ from types import SimpleNamespace
 import numpy as np
 from PySide6 import QtCore
 
-from core.brushes import MAX_SIZE, SCULPT_OPS, box, ellipsoid, face_region, layer_region, mirrored, placed, sculpt
+from core.brushes import (FILL_MATCHES, FILL_SCOPES, MAX_SIZE, SCULPT_OPS, box, ellipsoid, face_region, flood,
+                          layer_region, mirrored, placed, sculpt, thick_line)
 from core.scene import place_plane, rotated
 
 SCULPT = SCULPT_OPS  # smooth, erode, grow
-KINDS = ("voxel", "face", "box", "ellipsoid", "stamp", *SCULPT)
-DRAGGED = ("box", "ellipsoid")  # kinds drawn by dragging a rectangle, written on release
+KINDS = ("voxel", "face", "box", "ellipsoid", "line", "fill", "stamp", *SCULPT)
+DRAGGED = ("box", "ellipsoid", "line")  # kinds drawn by dragging (a rectangle, a line), written on release
+MAX_TOLERANCE = 50  # the fill's colour tolerance, ΔE (CIEDE2000)
 SWAPPED_SCULPT = {"erode": "grow", "grow": "erode"}  # with Shift, as attach and erase
 SHIFT_MODE = {"attach": "erase", "erase": "attach", "paint": "erase",  # MagicaVoxel's attach / erase tandem
               "protect": "unprotect"}
 CTRL_MODE = {"attach": "paint", "erase": "paint", "paint": "attach", "protect": "protect"}
-PROTECT_KINDS = ("voxel", "face", "box", "ellipsoid")  # the Protect mode marks what these cover; the other kinds act as voxel
+PROTECT_KINDS = ("voxel", "face", "box", "ellipsoid", "line", "fill")  # the Protect mode marks what these cover; the other kinds act as voxel
 
 
 def mode_for(tool: str, shift: bool = False, ctrl: bool = False, alt: bool = False) -> str:
@@ -76,7 +81,12 @@ class Brush(QtCore.QObject):
         self.volume = True   # 3D (cube, sphere) instead of 2D (square, circle)
         self.height = 0      # the ellipsoid's height in layers; 0: its rectangle's shorter side
         self.mirror = (False, False, False)
+        self.mirror_plane = (None, None, None)  # per axis: None the model's centre, else doubled (mirror_sum)
         self.stamp = None    # (name, Model, orientation) for the stamp kind
+        self.fill_scope = "connected"  # FILL_SCOPES
+        self.fill_match = "colour"     # FILL_MATCHES
+        self.fill_diagonal = False     # cells touching at edges and corners count as connected too
+        self.fill_tolerance = 0.0      # colours this close (ΔE) to the clicked one fill with it
 
     @property
     def shape(self) -> str:
@@ -93,8 +103,18 @@ class Brush(QtCore.QObject):
                 value = max(0, min(MAX_SIZE, int(value)))
             if name == "mirror":
                 value = tuple(bool(v) for v in value)
+            if name == "mirror_plane":
+                value = tuple(None if v is None else int(v) for v in value)
             if name == "kind" and value not in KINDS:
                 raise ValueError(f"brush kinds: {', '.join(KINDS)}")
+            if name == "fill_scope" and value not in FILL_SCOPES:
+                raise ValueError(f"fill scopes: {', '.join(FILL_SCOPES)}")
+            if name == "fill_match" and value not in FILL_MATCHES:
+                raise ValueError(f"fill matches: {', '.join(FILL_MATCHES)}")
+            if name == "fill_tolerance":
+                value = max(0.0, min(float(MAX_TOLERANCE), float(value)))
+            if name == "fill_diagonal":
+                value = bool(value)
             if getattr(self, name) != value:
                 setattr(self, name, value)
                 changed = True
@@ -116,7 +136,20 @@ class Brush(QtCore.QObject):
 
 def _as_voxel(brush: Brush):
     """The voxel kind with this brush's size, shape and mirror (the Protect mode's stand-in for the others)."""
-    return SimpleNamespace(kind="voxel", size=brush.size, shape=brush.shape, mirror=brush.mirror, stamp=None)
+    return SimpleNamespace(kind="voxel", size=brush.size, shape=brush.shape, mirror=brush.mirror,
+                           mirror_plane=brush.mirror_plane, stamp=None)
+
+
+_labels = {}  # the fill brush's numbered areas, kept while the model and the brush stay as they were
+
+
+def fill_region(doc, brush, tool: str, seed, normal) -> np.ndarray:
+    """The fill brush's voxels from a seed voxel in a mode (core.brushes.flood): attach fills an enclosed
+    hollow, paint and erase take the matching voxels; a layer is the one across the clicked face's normal."""
+    model = doc.model
+    return flood(model.colour, model.material, seed, tool == "attach", brush.fill_scope,
+                 int(np.argmax(np.abs(normal))), brush.fill_match, brush.fill_diagonal, model.table.labs,
+                 brush.fill_tolerance, _labels, (id(model), model.version))
 
 
 def stamp_low(target, normal, size):
@@ -150,7 +183,8 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
     if brush.kind in SCULPT:
         op = SWAPPED_SCULPT.get(brush.kind, brush.kind) if shift else brush.kind
         anchor = hit if hit is not None else target
-        region, _ = mirrored(placed(brush.shape, brush.size, anchor, normal), doc.size, brush.mirror)
+        region, _ = mirrored(placed(brush.shape, brush.size, anchor, normal), doc.size, brush.mirror,
+                             brush.mirror_plane)
         return sculpt(doc.model.colour, doc.model.material, region, op)
     if target is None:
         return None
@@ -184,10 +218,18 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
         start, start_normal = box_start if box_start is not None else (target, normal)
         points = ellipsoid(start, box_end if box_end is not None else target, start_normal, brush.height,
                            outward=tool == "attach", centred=in_slice)
+    elif brush.kind == "line":
+        start, start_normal = box_start if box_start is not None else (target, normal)
+        points = thick_line(start, box_end if box_end is not None else target, brush.shape, brush.size,
+                            int(np.argmax(np.abs(start_normal))))
+    elif brush.kind == "fill":
+        points = fill_region(doc, brush, tool, target, normal)
+        if not len(points):
+            return None
     else:
         shape = brush.shape
         points = placed(shape, brush.size, target, normal, against=tool == "attach" and not in_slice)
-    points, source = mirrored(points, doc.size, brush.mirror)
+    points, source = mirrored(points, doc.size, brush.mirror, brush.mirror_plane)
     if colours is None:
         colours = np.full(len(points), doc.colour, dtype=np.uint8)
         materials = np.full(len(points), doc.material, dtype=np.uint8)

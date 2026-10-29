@@ -146,6 +146,7 @@ class SceneDocks(QtCore.QObject):
                 w.docks["Project"].toggleView(True)  # its parts and instances
                 w.docks["Project"].setAsCurrentTab()
                 self._render_scene(True)
+                w.remember_recent(path)
             elif str(path).lower().endswith(".vox") and self._vox_models(path) > 1:
                 try:  # a MagicaVoxel scene: its models become the project's parts
                     self.project_doc.import_vox(path)
@@ -154,6 +155,7 @@ class SceneDocks(QtCore.QObject):
                     return
                 first = next(iter(self.project_doc.project.models))
                 self.edit_model(first)
+                w.remember_recent(path)
                 w.statusBar().showMessage(f"{len(self.project_doc.project.models)} parts from {Path(path).name}: "
                                           "a new project (Save project writes them into assets/)", 6000)
             else:
@@ -245,6 +247,7 @@ class SceneDocks(QtCore.QObject):
         except Exception as error:
             QtWidgets.QMessageBox.warning(self.window, "Save project", str(error))
             return
+        self.window.remember_recent(target)
         self.window.statusBar().showMessage(f"Saved {target}", 4000)
 
     def show_notes(self, text: str):

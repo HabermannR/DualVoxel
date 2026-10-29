@@ -5,7 +5,8 @@ environment that lights the model instead (an .exr from the environments
 folders, or any other by EXR file…) with its strength and turn; and the floor:
 the wooden table, matte, mirror, polished metal, cloth or none, in its preset's
 colour and roughness or one's own. Tilt blur switches the tilt-shift band;
-Pause (or F9) stops the render and frees the GPU. Only the picture changes,
+Ortho draws with parallel rays (no perspective; greyed out with a renderer
+from before it); Pause (or F9) stops the render and frees the GPU. Only the picture changes,
 never the model.
 """
 from __future__ import annotations
@@ -44,11 +45,17 @@ class RenderSetupPanel(QtWidgets.QWidget):
         self.blur_box.setToolTip("The tilt-shift blur above and below the model's band; off shows it sharp")
         self.blur_box.setChecked(render_view.tilt_blur)
         self.blur_box.toggled.connect(render_view.set_tilt_blur)
+        self.ortho_box = QtWidgets.QCheckBox("Ortho")
+        self.ortho_box.setChecked(render_view.camera.ortho)
+        self.ortho_box.toggled.connect(render_view.set_ortho)
+        render_view.ortho_changed.connect(self._show_ortho)
+        render_view.renderer_started.connect(self._show_ortho)
         self.pause_button = QtWidgets.QPushButton("Pause render", checkable=True)
         self.pause_button.setToolTip("Stop drawing and free the GPU; the last picture stays (F9)")
         self.pause_button.toggled.connect(render_view.set_paused)
         render_view.paused_changed.connect(self._show_paused)
         render_row.addWidget(self.blur_box)
+        render_row.addWidget(self.ortho_box)
         render_row.addStretch(1)
         render_row.addWidget(self.pause_button)
         layout.addLayout(render_row)
@@ -57,6 +64,7 @@ class RenderSetupPanel(QtWidgets.QWidget):
         hint.setStyleSheet("color: #888")
         layout.addWidget(hint)
         layout.addStretch(1)
+        self._show_ortho()
 
     # --- surroundings: an HDR environment and the floor --------------------------------------
     def _surroundings_box(self) -> QtWidgets.QGroupBox:
@@ -163,6 +171,17 @@ class RenderSetupPanel(QtWidgets.QWidget):
         self.floor_roughness.setEnabled(state["floor"] not in ("wood", "none"))
         for widget in widgets:
             widget.blockSignals(False)
+
+    def _show_ortho(self, *_) -> None:
+        able = self.render_view.has_ortho
+        self.ortho_box.blockSignals(True)
+        self.ortho_box.setChecked(self.render_view.camera.ortho)
+        self.ortho_box.blockSignals(False)
+        self.ortho_box.setEnabled(able)
+        self.ortho_box.setToolTip("Orthographic: parallel rays, so parallel edges stay parallel (no perspective); "
+                                  "the wheel widens or narrows the view" if able else
+                                  "The orthographic view needs a newer renderer (VoxelRenderer.dll from 29 October "
+                                  "2026 on)")
 
     def _show_paused(self, paused: bool) -> None:
         self.pause_button.blockSignals(True)

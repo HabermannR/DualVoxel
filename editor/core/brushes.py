@@ -6,7 +6,10 @@ the clicked face (perpendicular to its normal); offsets are centred on the
 anchor voxel (an even size reaches one further to the low side). The face brush
 takes the clicked face's connected flat area, the box brush a rectangle between
 two voxels in one layer, the ellipsoid brush the ellipsoid over such a rectangle,
-standing up from it. Mirroring repeats the voxels across the model's centre.
+standing up from it. The line brush draws a straight line between two voxels with
+the voxel brush's shape and size; the fill brush takes a connected area (region_labels).
+Mirroring repeats the voxels across the model's centre,
+or across a plane of one's own per axis (through a voxel or between two).
 """
 from __future__ import annotations
 
@@ -107,15 +110,134 @@ def ellipsoid(start, end, normal, height: int = 0, outward: bool = True, centred
     return grid[(d ** 2).sum(axis=1) <= 1]
 
 
-def mirrored(points, size, axes):
-    """The points and their mirror images across the model's centre on each axis in `axes` (x, y, z flags),
-    each once: (points, index of the original point each came from)."""
+def line(start, end) -> np.ndarray:
+    """The voxels on the straight line from start to end, both ends included: one per step along the axis it
+    goes furthest on (as the assistant's draw_line). (n, 3) x, y, z points."""
+    start, end = np.asarray(start, dtype=int), np.asarray(end, dtype=int)
+    steps = int(np.abs(end - start).max()) + 1
+    return np.rint(np.linspace(start, end, steps)).astype(int)
+
+
+def thick_line(start, end, shape: str, size: int, normal_axis: int = 2) -> np.ndarray:
+    """The line from start to end drawn with a voxel brush of this shape and size at each of its voxels (a flat
+    shape lies across normal_axis)."""
+    pts = line(start, end)
+    if size <= 1:
+        return pts
+    return np.unique((pts[:, None, :] + offsets(shape, size, normal_axis)[None]).reshape(-1, 3), axis=0)
+
+
+def region_labels(mask_zyx: np.ndarray, seed, axis: int | None = None, diagonal: bool = False) -> np.ndarray:
+    """Connected areas of a bool plane (z, y, x), numbered: in 3D (axis None, an (x, y, z) array), or only in the
+    seed's layer across `axis` (a 2D array of that layer's other two axes, in order). Cells touch face to face,
+    or with `diagonal` edge and corner to corner too. The fill brush keeps these between hovers."""
+    from scipy.ndimage import generate_binary_structure, label
+    mask = mask_zyx.transpose(2, 1, 0)  # (x, y, z)
+    if axis is None:
+        return label(mask, generate_binary_structure(3, 3 if diagonal else 1))[0]
+    plane = np.take(mask, int(seed[axis]), axis=axis)
+    return label(plane, generate_binary_structure(2, 2 if diagonal else 1))[0]
+
+
+def labelled_region(labels: np.ndarray, seed, axis: int | None = None) -> np.ndarray:
+    """The cells of the seed's area in region_labels' numbering, as (x, y, z) points (none when the seed is not
+    in the mask)."""
+    seed = np.asarray(seed, dtype=int)
+    if axis is None:
+        own = labels[tuple(seed)]
+        return np.argwhere(labels == own) if own else np.zeros((0, 3), dtype=int)
+    others = [a for a in range(3) if a != axis]
+    own = labels[seed[others[0]], seed[others[1]]]
+    if not own:
+        return np.zeros((0, 3), dtype=int)
+    u, v = np.nonzero(labels == own)
+    pts = np.zeros((len(u), 3), dtype=int)
+    pts[:, others[0]], pts[:, others[1]], pts[:, axis] = u, v, seed[axis]
+    return pts
+
+
+def enclosed(points, size, axis: int | None = None) -> bool:
+    """Whether an empty area keeps off the box's sides, so filling it fills a hollow and not the space around
+    the model: on every axis it spreads along (all but `axis` for a layer). The floor (z = 0) closes it."""
+    pts = np.asarray(points).reshape(-1, 3)
+    for a in range(3):
+        if a == axis or not len(pts):
+            continue
+        if (pts[:, a] == size[a] - 1).any() or (a != 2 and (pts[:, a] == 0).any()):
+            return False
+    return True
+
+
+FILL_SCOPES = ("connected", "layer", "model")  # the fill's reach: connected in 3D, in the seed's layer, all
+FILL_MATCHES = ("colour", "colour and material", "solid")  # which voxels a fill of solid voxels spreads through
+NOTHING = np.zeros((0, 3), dtype=int)
+
+
+def flood(colour_zyx: np.ndarray, material_zyx: np.ndarray, seed, empty: bool, scope: str = "connected",
+          axis: int = 2, match: str = "colour", diagonal: bool = False, labs=None, tolerance: float = 0,
+          cache: dict | None = None, version=None) -> np.ndarray:
+    """The fill brush's voxels from a seed voxel, (x, y, z) points (none: nothing to fill). empty (attach)
+    floods the empty cells connected to an empty seed, but only an enclosed hollow (enclosed); otherwise the
+    solid voxels connected to a solid seed that match it: match "colour" (its colour, or with labs, the colour
+    table's Lab values by slot - 1, any colour within `tolerance` ΔE of it), "colour and material", or "solid"
+    (any). scope: "connected" in 3D, "layer" (connected in the seed's layer across `axis`) or "model" (every
+    matching voxel, connected or not; an empty fill stays connected). cache: a dict that keeps the last
+    numbering of areas (region_labels), valid while `version` (the caller's: which model, which edit) holds."""
+    sz, sy, sx = colour_zyx.shape
+    x, y, z = (int(v) for v in seed)
+    if not (0 <= x < sx and 0 <= y < sy and 0 <= z < sz) or empty != (colour_zyx[z, y, x] == 0):
+        return NOTHING
+    if scope not in FILL_SCOPES or match not in FILL_MATCHES:
+        raise ValueError(f"fill scopes: {', '.join(FILL_SCOPES)}; matches: {', '.join(FILL_MATCHES)}")
+    if empty or match == "solid":
+        key = ("empty",) if empty else ("solid",)
+        mask = (lambda: colour_zyx == 0) if empty else (lambda: colour_zyx > 0)
+    else:
+        c, m = int(colour_zyx[z, y, x]), int(material_zyx[z, y, x])
+        slots = [c]
+        if tolerance > 0 and labs is not None:
+            from colour_math import de2000  # palette/, on the path through core.model
+            slots = (np.nonzero(de2000(np.asarray(labs)[c - 1][None, :], np.asarray(labs)) <= tolerance)[0]
+                     + 1).tolist()
+        same_material = match == "colour and material"
+        key = ("colour", tuple(slots), m if same_material else None)
+        mask = (lambda: np.isin(colour_zyx, slots) & (material_zyx == m)) if same_material else \
+            (lambda: np.isin(colour_zyx, slots))
+    if scope == "model" and not empty:
+        z_, y_, x_ = np.nonzero(mask())
+        return np.stack([x_, y_, z_], axis=1)
+    layer = axis if scope == "layer" else None
+    where = (version, colour_zyx.shape, key, diagonal, layer, None if layer is None else (x, y, z)[layer])
+    labels = cache.get(where) if cache is not None and version is not None else None
+    if labels is None:
+        labels = region_labels(mask(), (x, y, z), layer, diagonal)
+        if cache is not None and version is not None:
+            cache.clear()  # one at a time: a 256-a-side model's numbering is 64 MB
+            cache[where] = labels
+    points = labelled_region(labels, (x, y, z), layer)
+    if empty and not enclosed(points, (sx, sy, sz), layer):
+        return NOTHING  # the space around the model, not a hollow
+    return points
+
+
+def mirror_sum(size, planes, axis: int) -> int:
+    """The mirror plane on an axis in doubled voxel coordinates: a voxel p mirrors to sum - p. planes[axis]
+    None (or planes None) is the model's centre, size - 1; an even sum lies through a voxel's centre, an odd
+    one between two voxels."""
+    plane = None if planes is None else planes[axis]
+    return size[axis] - 1 if plane is None else int(plane)
+
+
+def mirrored(points, size, axes, planes=None):
+    """The points and their mirror images on each axis in `axes` (x, y, z flags), across the model's centre or
+    `planes` (per axis, doubled: mirror_sum), each once: (points, index of the original point each came from).
+    Images outside the model are left for the caller to drop."""
     pts = np.asarray(points, dtype=int).reshape(-1, 3)
     source = np.arange(len(pts))
     for a, on in enumerate(axes):
         if on:
             flipped = pts.copy()
-            flipped[:, a] = size[a] - 1 - flipped[:, a]
+            flipped[:, a] = mirror_sum(size, planes, a) - flipped[:, a]
             pts, source = np.concatenate([pts, flipped]), np.concatenate([source, source])
     _, first = np.unique(pts, axis=0, return_index=True)
     first.sort()

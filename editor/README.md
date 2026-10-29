@@ -83,13 +83,18 @@ render dock.
   circle; 2D, flat across the clicked face, or 3D, a cube or sphere, resting
   on the face when attaching), Face (the clicked face's whole connected flat
   area: attach builds a layer on it), Box (drag a rectangle in the clicked
-  layer), Stamp (a project's model, see Scenes). **Sculpt:** Smooth (rounds
+  layer), Line (drag between two voxels: a line as thick as the Voxel brush),
+  Fill (the area connected to the clicked voxel, of its colour or within a ΔE
+  tolerance, in 3D, in its layer or in the whole model; attach fills an
+  enclosed hollow, never the space around the model), Stamp (a project's model, see Scenes). **Sculpt:** Smooth (rounds
   off what is in the brush: fills hollows, takes off bumps), Erode (takes the
   outer skin off) and Grow (adds a skin, in the colours beside it), in the
   Voxel brush's size and shape, whatever the mode; Shift swaps Erode and Grow.
   A drag sculpts again at every step, so going over a place digs or builds
   deeper. **Mirror** X / Y / Z
-  repeats every edit across the model's centre. A see-through preview in the
+  repeats every edit across the model's centre, or across a plane set per axis
+  in half voxels (⌖: through the voxel last picked), shown in the 3D view and
+  the slices. A see-through preview in the
   mode's colour shows exactly what a click would change. A drag applies the
   brush along it (attach stays in one layer); each click or drag is one undo
   step.

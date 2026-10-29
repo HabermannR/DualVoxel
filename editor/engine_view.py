@@ -66,6 +66,7 @@ class EngineView:
                 not self.animated or now - self.last_frame < 1 / ANIMATED_FPS):
             return False
         self.last_frame = now
+        self.renderer.projection(camera.ortho, camera.ortho_height)  # cheap; a change starts the picture afresh
         self.samples = self.renderer.frame(self.rgba, camera.pos, camera.fwd, camera.right, camera.up, moving)
         return True
 

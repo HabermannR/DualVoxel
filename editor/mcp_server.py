@@ -209,6 +209,17 @@ def draw_line(start: list[int], end: list[int], colour: int, material: int = 0, 
 
 
 @mcp.tool()
+def flood_fill(point: list[int], colour: int, material: int = 0, reach: str = "connected", axis: str = "z",
+               match: str = "colour", diagonal: bool = False, tolerance: float = 0) -> dict:
+    """The fill bucket. At a solid voxel: recolour (colour 0: erase) the voxels connected to it that match it,
+    match "colour" (its colour, or any within tolerance ΔE of it), "colour and material" or "solid" (any).
+    At an empty cell: fill the enclosed hollow around it (open space is refused). reach: "connected" in 3D,
+    "layer" (only in the point's layer across axis) or "model" (every matching voxel)."""
+    return _do("flood_fill", point=point, colour=colour, material=material, reach=reach, axis=axis, match=match,
+               diagonal=diagonal, tolerance=tolerance)
+
+
+@mcp.tool()
 def set_voxels(voxels: list[list[int]], colour: int | None = None, material: int = 0) -> dict:
     """Single voxels, one undo step: [x, y, z] (with colour and material), [x, y, z, colour] or
     [x, y, z, colour, material]; colour 0 erases. For details: eyes, buttons, patterns."""
@@ -216,10 +227,11 @@ def set_voxels(voxels: list[list[int]], colour: int | None = None, material: int
 
 
 @mcp.tool()
-def mirror(axis: str = "x", keep: str = "low") -> dict:
+def mirror(axis: str = "x", keep: str = "low", plane: float | None = None) -> dict:
     """Copy one half of the model onto the other across its centre: draw one side of a figure, mirror it.
-    keep: the half that stays, "low" (below the centre on that axis) or "high"."""
-    return _do("mirror", axis=axis, keep=keep)
+    keep: the half that stays, "low" (below the plane on that axis) or "high". plane: another mirror plane than
+    the centre, a coordinate on the axis in half voxels (12: through voxel 12, 12.5: between 12 and 13)."""
+    return _do("mirror", axis=axis, keep=keep, plane=plane)
 
 
 @mcp.tool()
@@ -531,6 +543,55 @@ def render_orbit(name: str, frames: int = 300, fps: float = 30, degrees: float =
     return editor.save_orbit(name, frames, fps, degrees, swing, yaw, pitch, width, height, samples, light,
                              _picture_model(), look,
                              _surroundings(surroundings, surroundings_strength, surroundings_rotation, floor))
+
+
+@mcp.tool()
+def export_views(name: str, views: list[str] | None = None, scale: int = 8, render: bool = False,
+                 samples: int = 64, light: str = "Overcast") -> dict:
+    """The model seen straight along each axis ("front", "back", "left" (from -x), "right", "top",
+    "bottom"; default all), `scale` pixels per voxel, as pictures to paint on in any paint program:
+    editor/outputs/<name>.<view>.colour.png (indexed, the colour table as palette), .material.png (a
+    false colour per material) and .shaded.png (colours with depth, to look at). render: also
+    .render.png from the path tracer, the same view without the floor. Read them back with import_views."""
+    return editor.export_views(editor.output_base(name), views, scale, render, samples, light, _picture_model())
+
+
+@mcp.tool()
+def reference_views(name: str, views: list[str] | None = None, iso: bool = True, width: int = 864,
+                    height: int = 1152, samples: int = 256, light: str = "Overcast") -> dict:
+    """Pictures of the model to start new concept images from (image-to-image) or to compare them with,
+    sized like a concept (864 x 1152, the figure about 82% of the height, light grey): each of `views`
+    (default "front", "side", "back"; also "left", "right", "top", "bottom") flat from the voxels, colours
+    with depth; with iso a three-quarter view from the front left and above from the path tracer (soft
+    light, no floor; starts the engine). Saved as editor/outputs/<name>.<view>.reference.png; look at them
+    with Read."""
+    return editor.reference_views(editor.output_base(name), views or ("front", "side", "back"), iso, width, height,
+                                  samples, light, _picture_model())
+
+
+@mcp.tool()
+def import_views(paths: list[str]) -> dict:
+    """Painted view pictures (from export_views, edited in a paint program) back onto the model as one
+    step: each changed pixel's colour or material goes to the first voxel along its line of sight; a
+    transparent colour pixel erases it; paint where the view shows no voxel is left out. A relative path
+    is from VoxelPipeline. Returns per view what changed."""
+    return _do("import_views", paths=[str(Path(p) if Path(p).is_absolute() else PIPELINE / p) for p in paths])
+
+
+@mcp.tool()
+def export_slices(name: str) -> dict:
+    """The whole model as two sheets of its layers (z = 0 up, left to right then in rows, each seen from
+    above with the back at the top), one pixel per voxel: editor/outputs/<name>.slices-XxYxZ.colour.png
+    and .material.png. Nothing is lost: import_slices reads them back exactly."""
+    return editor.export_slices(editor.output_base(name), _picture_model())
+
+
+@mcp.tool()
+def import_slices(path: str) -> dict:
+    """A slice sheet (its .colour.png; the .material.png beside it is read too) as a new, unsaved model.
+    A relative path is from VoxelPipeline. Not while connected: it would replace the user's model."""
+    _own_only("opens files (File > Import voxel PNG)")
+    return editor.import_slices(str(Path(path) if Path(path).is_absolute() else PIPELINE / path))
 
 
 @mcp.tool()

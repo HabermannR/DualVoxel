@@ -34,6 +34,8 @@ By default the editor looks for these files in `editor/renderer/`. Without them 
 
 **macOS and Linux** (macOS 13 or newer; the tests run on both in GitHub Actions): `uv sync` installs the same environment, and `sh run_qt_editor.sh` and `sh run_mcp.sh` stand for the `.cmd` files (the Python is `.venv/bin/python`). On Linux the renderer is `libVoxelRenderer.so` with the same two shaders (the release's `renderer-linux-x64-<date>.zip`, built on Ubuntu 24.04; glibc 2.34 or newer), without DLSS, so it accumulates samples. It needs `libvulkan1` and a Vulkan driver with hardware ray tracing; without such a GPU, Mesa's lavapipe (`mesa-vulkan-drivers`, 25.2 tested) draws the same picture on the CPU, about twenty times slower than an RTX 2080 Ti. The first start after a new renderer takes some minutes while Mesa compiles the shader; it keeps the result. The tests on Linux in GitHub Actions render this way. There is no macOS build of the renderer, so the Render dock says it is missing and `render` raises a `FileNotFoundError`; `preview`, the edit views, the slices and everything else work. A future build would be `libVoxelRenderer.dylib` in the same folder. The live link file is in `~/Library/Application Support/DualVoxel/`.
 
+The Render dock's **Ortho** and the orthographic option of **Render picture…** need a renderer from 29 October 2026 or later, which has `renderer_set_projection` (parallel rays) and `renderer_set_fov`. With an older one the editor draws in perspective and greys out both, and `VoxelRenderer.projection(True)` raises a `RuntimeError`.
+
 The renderer sets up the GPU on its first frame. If no GPU qualifies (no Vulkan 1.3, no hardware ray tracing, no Vulkan driver), the Render dock stops and says why, naming each GPU and what it lacks, and `render` in the API raises a `RuntimeError` with the same message. Renderer zips from before 0.2.0 cannot say why; they only report that the renderer failed.
 
 Settings for this machine go in `editor/editor.local.json` (not committed; `editor.local.example.json` is a template):
@@ -97,6 +99,12 @@ Three names are fixed effects that ignore their fields: `water`, `staff field` a
 
 *Front to back: metal, roughness, transmission, density (1 to 32 voxels), subsurface, sheen, ior (1.0 to 2.4).*
 
+`palette/build_gas_sweep.py` does the same with balls of gas (group `gas`), whose fields are **density**, **anisotropy**, **emission** and **light**:
+
+![The gas sweep](figures/render_gas_sweep.png)
+
+*Front to back: density (white steam, 1 to 32 voxels: thick to nearly clear), anisotropy (steam, 0 to 0.9: more forward scattering, so dimmer seen with the sun behind you), colour (smoke, black to white: the colour is how a thick body looks), emission (green glowing gas, 0 to 4, lighting the floor), light (violet glowing gas with fire, pulse, flash, sickly, unnatural and arcane, at one moment).*
+
 ---
 
 ## Shared and own materials
@@ -140,6 +148,21 @@ The fingerprints are the first 8 bytes of a SHA-256 over the colour table (ids a
 
 `.vox` (MagicaVoxel) is import and export only. Saving writes `export/<name>.vox` beside the `.vx2`: lossless by default (each colour + material pair is one palette entry, with `_spell_color` and `_spell_material` in its `MATL` chunk; at most 255 pairs per model), or colours only.
 
+### Voxel PNGs
+
+`core/voxel_png.py` writes a model as pictures and reads them back (File > Export / Import voxel PNG…, and the API, CLI and MCP tools below). Two kinds:
+
+| Kind | Files | Pixels | Read back |
+|---|---|---|---|
+| Slices: the whole model | `<name>.slices-XxYxZ.colour.png`, `.material.png` | layers z = 0 up, left to right then in rows, each seen from above (x right, back at the top), one pixel per voxel | exactly, as a new model |
+| Views: the surface | per view `<name>.<view>.colour.png`, `.material.png`, `.shaded.png` | the first voxel along each line of sight, `scale` pixels a voxel; views `front` (from −y), `back`, `left` (from −x), `right`, `top`, `bottom` | onto the model shown, as one undo step |
+
+- **Colour pictures** are indexed: palette entry n is colour slot n, entry 0 transparent (empty). A picture saved back as RGB(A) also works; a colour not in the table takes the nearest slot, and the report counts those pixels.
+- **Material pictures** are RGBA in false colours, one per material id (`MATERIAL_RGB`, the same in every file), transparent where there is no voxel. A colour that is no material's is refused.
+- **`.shaded.png`** is the colours with depth (nearer brighter, a dark line where the depth jumps), only to look at; `.render.png` (API, CLI and MCP with `render`) is the path tracer's picture of the same view.
+- **Reading views back** changes only voxels whose pixels were painted: a colour pixel made transparent erases its voxel, paint where the view shows no voxel is left out and counted (`outside`). Of a view's `scale × scale` block, the most common value counts. Where two views show one voxel, the later view wins. Protected voxels stay.
+- A `dualvoxel` text chunk holds the kind, the size, the tables' fingerprints and, for views, the view as exported, so a view changes only what was painted on it, even after later edits to the model. Paint programs often drop it: a slice sheet then reads its size from its name, and a view is compared with the model as it is now.
+
 Projects (`assets/<name>.project.json`) name their colour table (`"colours"`), list parts as `.vx2` paths and scenes of instances, each with a position (the low corner of its box) and an orientation written as where the model's axes point (`+y-x+z` is a quarter turn about z).
 
 ---
@@ -161,7 +184,7 @@ editor.save_render("corpse-skin.png")       # rendered, into outputs/
 editor.save_model("corpse-skin")             # assets/corpse-skin.vx2
 ```
 
-Methods: `new_model`, `open_model`, `save_model`, `info`, `colour_table`, `nearest_colours`, `materials`, `paint_box`, `erase_box`, `shape_slice`, `set_material_box`, `set_material_for_colour`, `replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`, `preview_png`, `render_png`, `save_preview`, `save_render`, `save_orbit`, `add_material`, `cloud`, `close`. Coordinates are `[x, y, z]` with z up; boxes are inclusive. Protected boxes survive every edit until cleared. `render_png` and `save_render` take `light`, one of the Light dock's presets (`core/lights.py`): `"Golden hour"` (the default), `"Day"`, `"Noon"`, `"Overcast"` or `"Night"`. Overcast is the one to judge colours under; golden hour turns everything orange. Both also take `look` (a finish from `postprocess.py`: `"none"`, `"film"`, `"night"`). `render_png` returns a picture up to 1920 × 1080 and 1024 samples; `save_render` writes one up to 8192 × 8192 and 4096 samples (print sizes).
+Methods: `new_model`, `open_model`, `save_model`, `info`, `colour_table`, `nearest_colours`, `materials`, `paint_box`, `erase_box`, `shape_slice`, `set_material_box`, `set_material_for_colour`, `replace_colour`, `protect_box`, `clear_protection`, `undo`, `redo`, `preview_png`, `render_png`, `save_preview`, `save_render`, `save_orbit`, `add_material`, `cloud`, `export_slices`, `import_slices`, `export_views`, `import_views`, `reference_views`, `close`. Coordinates are `[x, y, z]` with z up; boxes are inclusive. Protected boxes survive every edit until cleared. `render_png` and `save_render` take `light`, one of the Light dock's presets (`core/lights.py`): `"Golden hour"` (the default), `"Day"`, `"Noon"`, `"Overcast"` or `"Night"`. Overcast is the one to judge colours under; golden hour turns everything orange. Both also take `look` (a finish from `postprocess.py`: `"none"`, `"film"`, `"night"`). `render_png` returns a picture up to 1920 × 1080 and 1024 samples; `save_render` writes one up to 8192 × 8192 and 4096 samples (print sizes).
 
 Undo (`core/model.py`): each edit, and each stroke in the window, is one step. A step keeps only the box of voxels it changed, both planes, zlib-packed, and undo and redo swap that box with the model's. A one-voxel edit on a 256-a-side model keeps a few bytes, not 33 MB. The history holds at most `HISTORY_LIMIT` (200) steps and `HISTORY_BYTES` (256 MB) of them; the oldest go first, and the newest step is always kept, however large. New and Open clear it. A whole-model transform (resize, fit, shift, turn, flip) is one step too, keeping both planes in full. Colours are the project's and are not undone with the voxels.
 
@@ -173,15 +196,24 @@ Undo (`core/model.py`): each edit, and each stroke in the window, is one step. A
 
 `--operations` takes a JSON list of `{"operation": name, "arguments": {...}}` using the edit methods above.
 
+Voxel PNGs (pictures into `outputs/`):
+
+```
+.venv\Scripts\python.exe editor_cli.py views   <model> --output name [--scale 8] [--render]
+.venv\Scripts\python.exe editor_cli.py paint   <model> --pictures outputs\name.front.colour.png ... --save name
+.venv\Scripts\python.exe editor_cli.py slices  <model> --output name
+.venv\Scripts\python.exe editor_cli.py unslice outputs\name.slices-33x21x64.colour.png --save name
+```
+
 ### MCP server
 
-`run_mcp.cmd` (`run_mcp.sh` on macOS) starts a stdio MCP server for an AI assistant; `mcp.example.json` is a client entry (adjust its paths). Its 49 tools:
+`run_mcp.cmd` (`run_mcp.sh` on macOS) starts a stdio MCP server for an AI assistant; `mcp.example.json` is a client entry (adjust its paths). Its 58 tools:
 
 | Group | Tools |
 |---|---|
 | The model | `connect_editor`, `disconnect_editor`, `open_model`, `new_model`, `save_model`, `model_info` |
 | Tables | `colour_table`, `find_colour`, `list_materials` |
-| Drawing | `paint_box`, `erase_box`, `shape_slice` (a rect or circle in one layer), `fill_shape` (ellipsoid, cylinder or cone in a box, solid or hollow), `draw_line` (with a radius), `set_voxels` (single voxels), `mirror` (one half onto the other), `copy_box` |
+| Drawing | `paint_box`, `erase_box`, `shape_slice` (a rect or circle in one layer), `fill_shape` (ellipsoid, cylinder or cone in a box, solid or hollow), `draw_line` (with a radius), `flood_fill` (the fill bucket: a connected area of a colour, or an enclosed hollow), `set_voxels` (single voxels), `mirror` (one half onto the other, across the centre or a `plane` in half voxels), `copy_box` |
 | Materials | `set_material_box`, `set_material_for_colour`, `replace_colour`, `add_material` (a material of the model's own: a copy of one with fields changed, e.g. glowing gas with the pulse light; not while connected) |
 | The whole model | `resize_model` (a new box, the voxels placed by an anchor per axis or an offset), `fit_model` (the box shrunk to the voxels), `shift_model` (everything moved inside the box, wrapping round or not), `rotate_model` (quarter turns, the box with them), `flip_model` |
 | Other models | `place_model` (copy a saved model's voxels in, turned and mirrored) |
@@ -189,8 +221,9 @@ Undo (`core/model.py`): each edit, and each stroke in the window, is one step. A
 | Noise | `speckle` (recolour a box from a weighted palette, scattered or in patches), `noise_terrain` (ground up to a smooth noise height, top, under and soil palettes), `erode_surface` (pits and bumps on what is in a box), `scatter` (small columns on the top surface: sprigs, flower dots, pebbles), `cloud` (a soft, uneven body in the empty cells of a box: gas puffs, mist, smoke, scattered fireflies) |
 | Protection, history | `protect_box`, `clear_protection`, `undo`, `redo` |
 | Reading | `read_slice` (a layer as a grid of colour slots or materials), `voxels_in_box` |
-| Pictures | `preview` (fast flat views), `render` (path-traced under a light preset, `light`, with a finish, `look`: `none`, `film` or `night`; up to 1920 × 1080; the first call starts the renderer), `render_file` (the same, or with `users_view` the Render dock's camera and light, up to 8192 a side and 4096 samples, saved as `editor/outputs/<name>.png` instead of handed back), the render tools take `surroundings` (`"sky"`, the light's own sun and sky, or an HDR environment: a path to an `.exr` or the name of one in `editor.local.json`'s `"environments"` folder), `surroundings_strength`, `surroundings_rotation` (degrees) and `floor` (`wood`, `matte`, `mirror`, `polished metal`, `cloth`, `none`); `render_orbit` (an animation saved as `editor/outputs/<name>` in `.mp4`, `.webp` or `.gif`: the camera turns `degrees` about the model from `yaw` and `pitch`, 360 once round, less an arc centred there, `swing` out and back so any angle loops; `frames` at `fps`, magic lights moving with them) |
-| The user (connected only) | `user_state` (current colour, material and mode, the voxel last picked with Alt + click, where the last stroke began, what the mouse is over), `user_view` (a render from the Render dock's camera and light) |
+| Pictures | `preview` (fast flat views), `render` (path-traced under a light preset, `light`, with a finish, `look`: `none`, `film` or `night`; up to 1920 × 1080; the first call starts the renderer), `render_file` (the same, or with `users_view` the Render dock's camera, light and projection, up to 8192 a side and 4096 samples, saved as `editor/outputs/<name>.png` instead of handed back), the render tools take `surroundings` (`"sky"`, the light's own sun and sky, or an HDR environment: a path to an `.exr` or the name of one in `editor.local.json`'s `"environments"` folder), `surroundings_strength`, `surroundings_rotation` (degrees) and `floor` (`wood`, `matte`, `mirror`, `polished metal`, `cloth`, `none`); `render_orbit` (an animation saved as `editor/outputs/<name>` in `.mp4`, `.webp` or `.gif`: the camera turns `degrees` about the model from `yaw` and `pitch`, 360 once round, less an arc centred there, `swing` out and back so any angle loops; `frames` at `fps`, magic lights moving with them) |
+| Voxel PNGs | `export_views` (each view's colour, material and shaded picture to paint on, saved in `editor/outputs/`; `render` adds the path tracer's), `import_views` (painted views back onto the model, one step; connected, onto the window's), `export_slices`, `import_slices` (a slice sheet as a new model; not while connected), `reference_views` (front, side, back and an iso render sized like a concept image, to start new concepts from) |
+| The user (connected only) | `user_state` (current colour, material and mode, the voxel last picked with Alt + click, where the last stroke began, what the mouse is over), `user_view` (a render from the Render dock's camera, light and projection) |
 
 Parts and instances (`project_ops.py`) work as in a FEM assembly: a project's models are its parts, and an instance places a part with a position (its box's low corner) and an orientation, linked, so an edit to the part shows in every instance. Connected, they change the project in the window: the Project dock and the Scene view show each change, and each is one step of the scene's undo. `place_model` is the unlinked copy: it writes a model's voxels into the current one. A finished flat model can be broken into parts after the fact when its build is known: `assets/meadow.project.json` is `meadow.vx2` as a ground, sprigs and 18 plant instances, and merges back to the same voxels.
 

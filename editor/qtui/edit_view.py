@@ -11,7 +11,7 @@ fills empty ones, paint recolours solid voxels, erase removes them, pick takes a
 voxel's colour and material, protect marks voxels the assistant may not change
 (tinted violet; Shift lifts it). Brushes: voxel (size, square or circle, flat or a
 volume), face (the clicked face's connected flat area), box (drag a
-rectangle in one layer), stamp (a project's model; R turns it, Esc stops), each
+rectangle in one layer), line (drag between two voxels), fill (a connected area), stamp (a project's model; R turns it, Esc stops), each
 mirrored across the model's centre if asked. A see-through preview, in the
 colour of the mode the keys held give, shows what a click would change. A drag
 applies the brush along it (attach stays in the first voxel's layer, so it does
@@ -28,15 +28,17 @@ from __future__ import annotations
 
 import numpy as np
 import pyvista as pv
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from pyvistaqt import QtInteractor
 from vtkmodules.vtkCommonDataModel import vtkStaticCellLocator
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker, vtkPolyDataMapper
 
+from core.brushes import mirror_sum
 from core.scene import IDENTITY
 from qtui.brush import DRAGGED, SCULPT, SWAPPED_SCULPT, Brush, brush_edit, held_mode, mode_for, size_step
 from qtui.document import PROTECT_MODES
+from qtui.view_cut import CutPanel, kept
 
 HOVER_COLOUR = {"attach": (0.3, 1.0, 0.4), "paint": (1.0, 0.85, 0.1), "erase": (1.0, 0.3, 0.3),
                 "pick": (0.4, 0.8, 1.0), "protect": (0.75, 0.45, 1.0), "unprotect": (0.6, 0.6, 0.65),
@@ -46,11 +48,27 @@ PROTECTED_RGB = np.array([150, 80, 255], dtype=np.float32)  # protected voxels l
 PROTECTED_TINT = 0.45
 CLICK_SLOP = 4  # pixels a press may move and still count as a click
 PREVIEW_OPACITY = 0.4
+PREVIEW_LIMIT = 200_000  # voxels a preview shows one by one; more (a big fill) show as their box's outline
 CHUNK = 32  # the model is meshed in blocks this many voxels a side; an edit remeshes the blocks it touches
 EDGE_RGB = (0.08, 0.08, 0.09)
+AXIS_RGB = ((0.95, 0.3, 0.3), (0.35, 0.85, 0.35), (0.35, 0.55, 1.0))  # x, y, z, as the axes in the corner
+MIRROR_OPACITY = 0.12
+BACKGROUNDS = {"Dark": ((0.16, 0.16, 0.18), (0.27, 0.28, 0.32)),  # (bottom, top of the gradient; None: flat)
+               "Light": ((0.80, 0.81, 0.84), (0.96, 0.96, 0.97)),
+               "White": ((1.0, 1.0, 1.0), None)}
 BIG_STEP = 8  # voxels an arrow key moves with Shift
 Key = QtCore.Qt.Key
 VIEW_MOVES = {Key.Key_Up: (0, 1), Key.Key_Down: (0, -1), Key.Key_Right: (1, 0), Key.Key_Left: (-1, 0)}
+# The view snaps: (direction from the model's centre to the eye, the view's up), as the slices see it: the
+# front from -y, the right side from +x, the top from +z. The isometric views look from the front right, 2:1
+# (pixel art's "isometric", 30 degrees up) or true (35.264 degrees, every axis equally short).
+_ISO = lambda up: (np.cos(np.radians(up)) / np.sqrt(2), -np.cos(np.radians(up)) / np.sqrt(2), np.sin(np.radians(up)))
+VIEWS = {"front": ((0, -1, 0), (0, 0, 1)), "back": ((0, 1, 0), (0, 0, 1)),
+         "right": ((1, 0, 0), (0, 0, 1)), "left": ((-1, 0, 0), (0, 0, 1)),
+         "top": ((0, 0, 1), (0, 1, 0)), "bottom": ((0, 0, -1), (0, -1, 0)),
+         "iso 2:1": (_ISO(30), (0, 0, 1)), "iso": (_ISO(np.degrees(np.arctan(1 / np.sqrt(2)))), (0, 0, 1))}
+VIEW_KEYS = {Key.Key_1: ("front", "back"), Key.Key_3: ("right", "left"), Key.Key_7: ("top", "bottom"),
+             Key.Key_0: ("iso 2:1", "iso")}  # with the view focused; Ctrl: the second
 
 
 def view_axes(camera):
@@ -217,12 +235,15 @@ class EditStyle(vtkInteractorStyleTrackballCamera):
 
 
 class EditView(QtWidgets.QWidget):
+    background_changed = QtCore.Signal(str)
+
     def __init__(self, doc):
         super().__init__()
         self.doc = doc
         self.brush = Brush()
         self.plotter = QtInteractor(self)
-        self.plotter.set_background((0.16, 0.16, 0.18), top=(0.27, 0.28, 0.32))
+        self.background = "Dark"
+        self.plotter.set_background(BACKGROUNDS["Dark"][0], top=BACKGROUNDS["Dark"][1])
         self.plotter.enable_lightkit()
         self.plotter.add_axes()
         try:
@@ -252,6 +273,39 @@ class EditView(QtWidgets.QWidget):
         frame_button = QtWidgets.QPushButton("Frame")
         frame_button.setToolTip("Fit the model in the view")
         frame_button.clicked.connect(self.frame)
+        self.ortho_box = QtWidgets.QCheckBox("Ortho")
+        self.ortho_box.setToolTip("Orthographic: no perspective, so parallel edges stay parallel and voxels the "
+                                  "same size at any depth (5 with the view focused)")
+        self.ortho_box.toggled.connect(self.set_ortho)
+        views_button = QtWidgets.QToolButton(text="View")
+        views_button.setToolTip("Look along an axis, or isometric (keys with the view focused: 1 front, 3 right, "
+                                "7 top, Ctrl for the opposite side; 0 isometric 2:1, Ctrl+0 true isometric)")
+        views_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        views_menu = QtWidgets.QMenu(views_button)
+        for name, key in (("front", "1"), ("back", "Ctrl+1"), ("right", "3"), ("left", "Ctrl+3"), ("top", "7"),
+                          ("bottom", "Ctrl+7"), ("iso 2:1", "0"), ("iso", "Ctrl+0")):
+            text = {"iso 2:1": "Isometric 2:1 (pixel art)", "iso": "True isometric"}.get(name, name.capitalize())
+            views_menu.addAction(f"{text}\t{key}", lambda n=name: self.snap_view(n))
+        views_button.setMenu(views_menu)
+        background_button = QtWidgets.QToolButton(text="Background")
+        background_button.setToolTip("The view's background: dark, light (for screenshots and prints) or white")
+        background_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        background_menu = QtWidgets.QMenu(background_button)
+        self.background_actions = QtGui.QActionGroup(background_menu)
+        for name in BACKGROUNDS:
+            action = background_menu.addAction(name, lambda n=name: self.set_background(n))
+            action.setCheckable(True)
+            action.setChecked(name == self.background)
+            self.background_actions.addAction(action)
+        background_button.setMenu(background_menu)
+        self.cut_box = QtWidgets.QCheckBox("Cut")
+        self.cut_box.setToolTip("Cut the model open, as in the FEM view cut: planes that each keep the voxels on one "
+                                "side; what they lay bare shows (and paints) as the section. Only this view; the "
+                                "model is unchanged")
+        self.cut_panel = CutPanel(self)
+        self.cut_panel.hide()
+        self.cut_panel.changed.connect(self._cut_changed)
+        self.cut_box.toggled.connect(self._cut_toggled)
         bar = QtWidgets.QHBoxLayout()
         bar.setContentsMargins(4, 2, 4, 2)
         hint = QtWidgets.QLabel("Left: mode · Shift/Ctrl: the others · Alt: pick · right: orbit · "
@@ -267,11 +321,16 @@ class EditView(QtWidgets.QWidget):
         bar.addWidget(hint, 1)
         bar.addWidget(self.materials_box)
         bar.addWidget(self.edges_box)
+        bar.addWidget(self.ortho_box)
+        bar.addWidget(self.cut_box)
+        bar.addWidget(background_button)
+        bar.addWidget(views_button)
         bar.addWidget(frame_button)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addLayout(bar)
+        layout.addWidget(self.cut_panel)
         layout.addWidget(self.plotter.interactor, 1)
 
         self.chunks: dict[tuple[int, int, int], tuple] = {}  # (x, y, z) of a chunk -> (actor, faces, mesh, locator)
@@ -293,6 +352,7 @@ class EditView(QtWidgets.QWidget):
         doc.resized.connect(lambda: self.on_reset(frame=False))  # the camera stays
         doc.current_changed.connect(self._clear_hover)
         self.brush.changed.connect(self._clear_hover)
+        self.brush.changed.connect(self.draw_mirror_planes)
         self.on_reset()
 
     # --- scene ------------------------------------------------------------------------
@@ -312,14 +372,74 @@ class EditView(QtWidgets.QWidget):
         self.picker.AddLocator(floor_cells)
         self.plotter.add_mesh(pv.Box((0, sx, 0, sy, 0, sz)).outline(), name="bounds", color=(0.5, 0.5, 0.55),
                               line_width=1, pickable=False, reset_camera=False)
+        self.cut_panel.blockSignals(True)  # the rebuild below shows the cuts pulled into the new size
+        self.cut_panel.set_size(self.doc.size)
+        self.cut_panel.blockSignals(False)
+        self.draw_cuts(render=False)
         for actor in list(self._chunk_of):
             self.plotter.renderer.RemoveActor(actor)
         self.chunks.clear()
         self._chunk_of.clear()
         self._shown = None
+        self.draw_mirror_planes(render=False)
         self.rebuild()
         if frame:
             self.frame()
+
+    def draw_mirror_planes(self, render: bool = True):
+        """Each mirror that is on as a see-through plane across the box, in its axis's colour."""
+        size = self.doc.size
+        for a in range(3):
+            name = f"mirror {'xyz'[a]}"
+            at = mirror_sum(size, self.brush.mirror_plane, a) / 2 + 0.5  # voxel p spans p..p + 1
+            if not self.brush.mirror[a] or not 0 <= at <= size[a]:
+                self.plotter.remove_actor(name, render=False)
+                continue
+            b, c = (a + 1) % 3, (a + 2) % 3
+            corners = np.zeros((4, 3))
+            corners[:, a] = at
+            corners[:, b] = (0, size[b], size[b], 0)
+            corners[:, c] = (0, 0, size[c], size[c])
+            self.plotter.add_mesh(pv.PolyData.from_regular_faces(corners, [[0, 1, 2, 3]]), name=name,
+                                  color=AXIS_RGB[a], opacity=MIRROR_OPACITY, show_edges=True,
+                                  edge_color=AXIS_RGB[a], lighting=False, pickable=False, reset_camera=False,
+                                  render=False)
+        if render:
+            self.plotter.render()
+
+    # --- the cut ---------------------------------------------------------------------------
+    def cuts(self):
+        """The cuts in force: the panel's, while Cut is on."""
+        return self.cut_panel.cuts if self.cut_box.isChecked() else []
+
+    def _cut_toggled(self, on: bool):
+        self.cut_panel.setVisible(on)
+        if on and not self.cut_panel.cuts:  # a first cut to start from: the top half off
+            self.cut_panel.add()  # emits changed, which redraws
+        else:
+            self._cut_changed()
+
+    def _cut_changed(self):
+        self.draw_cuts(render=False)
+        self.rebuild()
+
+    def draw_cuts(self, render: bool = True):
+        """Each cut in force as an outline across the box, in its axis's colour."""
+        size = self.doc.size
+        for name in [n for n in self.plotter.actors if str(n).startswith("cut ")]:
+            self.plotter.remove_actor(name, render=False)
+        for i, cut in enumerate(self.cuts()):
+            a = cut.axis
+            b, c = (a + 1) % 3, (a + 2) % 3
+            corners = np.zeros((4, 3))
+            corners[:, a] = cut.at
+            corners[:, b] = (0, size[b], size[b], 0)
+            corners[:, c] = (0, 0, size[c], size[c])
+            self.plotter.add_mesh(pv.PolyData.from_regular_faces(corners, [[0, 1, 2, 3]]).extract_all_edges(),
+                                  name=f"cut {i}", color=AXIS_RGB[a], line_width=2, pickable=False,
+                                  reset_camera=False, render=False)
+        if render:
+            self.plotter.render()
 
     # --- the voxels, in chunks ----------------------------------------------------------
     def rebuild(self):
@@ -357,10 +477,15 @@ class EditView(QtWidgets.QWidget):
         return {(x + first[0], y + first[1], z + first[2]) for x, y, z in touched_chunks(grid)}
 
     def _planes(self):
-        """(colour, key plane or None when it is the colour plane, key -> sRGB, protected or None)."""
+        """(colour, key plane or None when it is the colour plane, key -> sRGB, protected or None); the colour
+        plane emptied where a cut takes the voxels away, so what it lays bare is meshed as the section."""
         key, lookup = self.doc.display_planes()
         colour = self.doc.model.colour
-        return colour, None if key is colour else key, lookup, self.doc.protected()
+        same = key is colour
+        keep = kept(colour.shape, self.cuts())
+        if keep is not None:
+            colour = np.where(keep, colour, 0).astype(colour.dtype)
+        return colour, None if same else key, lookup, self.doc.protected()
 
     def _shown_fits(self) -> bool:
         if self._shown is None:
@@ -460,7 +585,45 @@ class EditView(QtWidgets.QWidget):
     def frame(self):
         sx, sy, sz = self.doc.size
         self.plotter.camera_position = [(sx * 0.5 + sz * 1.3, -sz * 1.6, sz * 1.25), (sx / 2, sy / 2, sz / 2), (0, 0, 1)]
+        self.plotter.reset_camera()  # in ortho, its scale fits the model too
+
+    def set_background(self, name: str):
+        """BACKGROUNDS' name: a gradient or a flat colour behind the model; unknown names (an old setting) are
+        ignored."""
+        if name not in BACKGROUNDS:
+            return
+        bottom, top = BACKGROUNDS[name]
+        self.plotter.set_background(bottom, top=top)
+        self.background = name
+        for action in self.background_actions.actions():
+            action.setChecked(action.text() == name)
+        self.plotter.render()
+        self.background_changed.emit(name)
+
+    def set_ortho(self, on: bool):
+        """Orthographic or perspective; the model keeps its size on screen. The wheel then zooms by scale."""
+        camera = self.plotter.renderer.GetActiveCamera()
+        on = bool(on)
+        if self.ortho_box.isChecked() != on:
+            self.ortho_box.setChecked(on)  # toggles back here
+            return
+        if bool(camera.GetParallelProjection()) == on:
+            return
+        if on:  # the height seen at the focal point, so nothing jumps
+            camera.SetParallelScale(camera.GetDistance() * np.tan(np.radians(camera.GetViewAngle()) / 2))
+        camera.SetParallelProjection(on)
+        self.plotter.renderer.ResetCameraClippingRange()
+        self.plotter.render()
+
+    def snap_view(self, name: str):
+        """Look at the model from one of VIEWS, framed."""
+        direction, up = VIEWS[name]
+        sx, sy, sz = self.doc.size
+        centre = np.array([sx, sy, sz]) / 2
+        self.plotter.camera_position = [tuple(centre + np.multiply(direction, max(sx, sy, sz) * 3)), tuple(centre),
+                                        up]
         self.plotter.reset_camera()
+        self._clear_hover()
 
     # --- picking ----------------------------------------------------------------------
     def _pick(self, pos):
@@ -600,6 +763,15 @@ class EditView(QtWidgets.QWidget):
             return
         points, colours, _ = voxels
         lo = points.min(axis=0)
+        what = self.brush.stamp[0] if self.brush.kind == "stamp" and self.brush.stamp else self.brush.kind
+        if len(points) > PREVIEW_LIMIT:  # a fill of a whole model: its box's outline, not every voxel's faces
+            hi = points.max(axis=0) + 1
+            self.preview_actor = self.plotter.add_mesh(
+                pv.Box((lo[0], hi[0], lo[1], hi[1], lo[2], hi[2])).outline(), color=HOVER_COLOUR[mode],
+                line_width=2, pickable=False, reset_camera=False, render=True)
+            self.doc.hover_changed.emit(f"3D {mode} ({what}): {self.doc.describe(*target)} · "
+                                        f"{len(points)} voxels (outlined)")
+            return
         sx, sy, sz = points.max(axis=0) - lo + 1
         grid = np.zeros((sz, sy, sx), dtype=np.uint8)
         x, y, z = (points - lo).T
@@ -627,7 +799,6 @@ class EditView(QtWidgets.QWidget):
         mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-2, -8)
         mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-2, -8)
         self.plotter.render()
-        what = self.brush.stamp[0] if self.brush.kind == "stamp" and self.brush.stamp else self.brush.kind
         self.doc.hover_changed.emit(f"3D {mode} ({what}): {self.doc.describe(*target)} · "
                                     f"{len(points)} voxels")
 
@@ -677,6 +848,13 @@ class EditView(QtWidgets.QWidget):
                 return True
             if self.brush.kind == "stamp" and key == QtCore.Qt.Key.Key_Escape:
                 self.brush.set(kind="voxel")
+                return True
+            if key == Key.Key_5:
+                self.ortho_box.toggle()
+                return True
+            if key in VIEW_KEYS:
+                ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
+                self.snap_view(VIEW_KEYS[key][ctrl])
                 return True
             delta = view_delta(self.plotter.camera, key, BIG_STEP if shift else 1)
             if delta is not None and self.stroke_mode is None:

@@ -20,10 +20,10 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from core.brushes import layer_region, mirrored, placed
-from qtui.brush import DRAGGED, SCULPT, brush_edit, held_mode, size_step
+from core.brushes import layer_region, mirror_sum, mirrored, placed
+from qtui.brush import DRAGGED, SCULPT, brush_edit, fill_region, held_mode, size_step
 from qtui.document import PROTECT_MODES
-from qtui.edit_view import PROTECTED_RGB, PROTECTED_TINT
+from qtui.edit_view import AXIS_RGB, PROTECTED_RGB, PROTECTED_TINT
 
 BACKGROUND = np.array([38, 38, 42], dtype=np.float32)
 GHOST = 0.33  # how strongly the voxels behind the layer show through
@@ -95,6 +95,28 @@ class SliceCanvas(QtWidgets.QWidget):
         painter.setBrush(fill if inside else QtCore.Qt.BrushStyle.NoBrush)
         painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
+    def _paint_mirrors(self, painter):
+        """The brush's mirror planes that cross this slice, dashed, in their axes' colours."""
+        brush, view = self.view.brush, self.view
+        if brush is None:
+            return
+        U, V = view.extent
+        cell, ox, oy = self._layout()
+        size = view.doc.size
+        for axis, along_u in ((view.u, True), (view.v, False)):
+            if not brush.mirror[axis]:
+                continue
+            at = mirror_sum(size, brush.mirror_plane, axis) / 2 + 0.5  # voxel p spans p..p + 1
+            if not 0 <= at <= size[axis]:
+                continue
+            painter.setPen(QtGui.QPen(QtGui.QColor.fromRgbF(*AXIS_RGB[axis]), 2, QtCore.Qt.PenStyle.DashLine))
+            if along_u:
+                x = ox + round((U - at if view.flip_u else at) * cell)
+                painter.drawLine(x, oy, x, oy + V * cell)
+            else:
+                y = oy + round((V - at if view.flip_v else at) * cell)
+                painter.drawLine(ox, y, ox + U * cell, y)
+
     # --- drawing ----------------------------------------------------------------------
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -114,6 +136,7 @@ class SliceCanvas(QtWidgets.QWidget):
                 painter.drawLine(ox, oy + j * cell, ox + U * cell, oy + j * cell)
         if self.region is not None and self.region.shown:
             self._paint_region(painter)
+        self._paint_mirrors(painter)
         dragging_region = self.region is not None and self.region.drags
         if self.hover is not None and self.box_start is None and not dragging_region:  # the brush's cells
             painter.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -128,8 +151,11 @@ class SliceCanvas(QtWidgets.QWidget):
             painter.setPen(QtGui.QPen(QtGui.QColor(80, 255, 110), 2))
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             rect = self._screen_rect(*self.box_start).united(self._screen_rect(*self.last))
-            if self.view.brush is not None and self.view.brush.kind == "ellipsoid":
+            kind = self.view.brush.kind if self.view.brush is not None else None
+            if kind == "ellipsoid":
                 painter.drawEllipse(rect)
+            elif kind == "line":
+                painter.drawLine(self._screen_rect(*self.box_start).center(), self._screen_rect(*self.last).center())
             else:
                 painter.drawRect(rect)
 
@@ -315,9 +341,13 @@ class SliceView(QtWidgets.QWidget):
             return [(u, v)]
         if b.kind == "face":
             points = layer_region(self.doc.model.colour, p, self.d)
+        elif b.kind == "fill":  # what the mode the keys give would fill
+            mode = held_mode(self.doc.tool, QtWidgets.QApplication.queryKeyboardModifiers())
+            mode = "paint" if mode in PROTECT_MODES else mode
+            points = fill_region(self.doc, b, mode, p, self._normal()) if mode != "pick" else [p]
         else:  # voxel and the sculpting brushes
             points = placed(b.shape, b.size, p, self._normal())
-        points, _ = mirrored(points, self.doc.size, b.mirror)
+        points, _ = mirrored(points, self.doc.size, b.mirror, b.mirror_plane)
         size, depth = self.doc.size, self.depth_box.value()
         return [(int(q[self.u]), int(q[self.v])) for q in points
                 if q[self.d] == depth and 0 <= q[self.u] < size[self.u] and 0 <= q[self.v] < size[self.v]]

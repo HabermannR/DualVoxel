@@ -51,6 +51,10 @@ or double-click `run_qt_editor.cmd` (on macOS: `sh run_qt_editor.sh`, or `.venv/
 
 **File → Open** (`Ctrl+O`) reads `.vx2` files and MagicaVoxel `.vox` files from any folder. A `.vox` file's colours snap to the nearest colours of the editor's table.
 
+You can also **drag a file onto the window** from Explorer: a `.vx2`, a `.vox` or a project (`.project.json`) opens, anywhere you drop it. As with **Open recent**, it asks first if the model has unsaved changes. Drop several and the first one opens; other files are refused.
+
+**File → Open recent** lists the last ten models and projects you opened or saved, newest first, as *name — folder* (point at one for its whole path). If the model you are editing has unsaved changes, it asks first, as closing does. A file that has been moved or deleted shows *(missing)*; clicking it offers to take it off the list. **Clear list** empties it.
+
 ---
 
 ## 2. Find your way around
@@ -59,7 +63,7 @@ Every part of the window is a dock. Drag a dock by its tab to move it beside ano
 
 | Dock | What it is for |
 |---|---|
-| 3D edit | Drawing in 3D, with a see-through preview of what a click would change. **Materials** colours voxels by material, **Edges** outlines them, **Frame** fits the model in view. |
+| 3D edit | Drawing in 3D, with a see-through preview of what a click would change. **Materials** colours voxels by material, **Edges** outlines them, **Ortho** switches off perspective (parallel edges stay parallel, every voxel the same size; remembered), **Cut** cuts the model open ([Cutting the model open](#cutting-the-model-open)), **Background** sets what is behind the model (dark, light or white, for screenshots; remembered), **View** looks along an axis or isometrically, **Frame** fits the model in view. |
 | Front, Side, Top | One layer of the model at a time, like a paint program ([Slices](#slices)). |
 | Render | The model in the path tracer, on a wooden table in sunlight. |
 | Brush | The mode, the brush, its size and shape, sculpting, mirroring. |
@@ -74,6 +78,17 @@ Every part of the window is a dock. Drag a dock by its tab to move it beside ano
 The status bar names the model, its size and voxel count, and what the mouse is over, for example `3D attach (voxel): (6, 2, 1) · 66 voxels`: the mode, the brush, the voxel, and how many voxels a click would change.
 
 **Undo** with `Ctrl+Z`, redo with `Ctrl+Y`. Every click or drag is one step, however many voxels it changed. While the Project dock, the Scene view or the Transform dock has the focus, undo works on the scene instead of the model.
+
+### Cutting the model open
+
+**Cut** in the 3D edit view's bar cuts the model open, as the view cut does in the FEM workbench. It's for looking under a hat brim, into a sleeve, or at what a figure is made of inside. A cut is a plane across the model: the **X-Y plane** cuts across z, the **X-Z plane** across y, the **Y-Z plane** across x. It keeps whole voxels on one side. What the cut lays bare shows as the section, in the voxels' own colours, and you can paint it like any other face.
+
+- Switching **Cut** on starts with one cut: the X-Y plane through the middle, keeping the lower half.
+- The panel under the bar lists the cuts. For the selected one: choose its plane, slide it (or type the layer it starts at), **Flip** keeps the other side, **Centre** puts it through the middle.
+- **Add** makes another cut; all of them apply together. Two cuts on one axis keep a band, for example `z ≥ 34` and `z < 64` for the head alone. **Remove** takes the selected cut away.
+- The planes show as outlines in their axis's colour.
+- A cut belongs to the view. It changes nothing in the model and is not saved. Switching **Cut** off shows the whole model again and keeps the cuts for next time.
+- Attaching against a section face fills a voxel that the cut hides; switch Cut off to see it.
 
 ---
 
@@ -111,6 +126,8 @@ You never have to remember this: the Brush dock shows the current mapping under 
 - **Face**: the clicked face's whole connected flat area. Attach builds a new layer on it; paint and erase take all of it.
 - **Box**: drag a rectangle in the clicked layer.
 - **Ellipsoid**: drag a rectangle on a face and get the ellipsoid over it. **Height** sets how many layers it stands (auto: the rectangle's shorter side, so a square gives a sphere). Attach rests it on the face; paint and erase sink it into the surface. In a slice it is centred on the layer.
+- **Line**: drag from one voxel to another for a straight line between them, written when you let go. It is as thick as the **Size** and **Shape** set for the voxel brush: size 1 is a line of single voxels, and a sphere of size 3 a round rod. Attach draws it in the empty cells against the faces you start and end on; paint and erase run it through voxels that are there. In a slice it stays in the layer.
+- **Fill**: a click takes the area connected to the clicked voxel. Paint gives it the current colour and material, and erase removes it. **Match** says what the fill spreads through: voxels of the clicked colour (**Colour**, with a **ΔE** tolerance for near shades; *exact* is that colour only), of its colour and material (**+ material**), or any solid voxel (**Any**). **Reach** is the area connected in 3D (**Connected**), only in the clicked layer across the face (**Layer**; in a slice, the slice's layer), or every matching voxel in the model (**Whole model**). **Diagonal** also counts voxels touching only at an edge or a corner as connected. Attach fills an enclosed hollow, such as the inside of a closed box, or the inside of a ring drawn on the floor with **Layer**. It never fills the space around the model: an empty area that reaches the box's sides is left alone (the floor counts as closed). A fill too big to preview voxel by voxel shows as the outline of its box.
 - **Stamp**: a whole model as the brush ([Stamps](#a-model-as-a-stamp)).
 
 ![The 3D edit view with a sphere brush preview](figures/current_edit_view.png)
@@ -134,6 +151,8 @@ A sculpt brush does the same whatever the mode, so while one is chosen no mode s
 ### Mirror
 
 **Mirror X**, **Y** and **Z** repeat every edit across the model's centre. Mirror X is the usual one for figures.
+
+The **Plane** row below sets where each axis mirrors. *centre* is the model's centre, and it stays the centre when the box changes size. A number is a coordinate on that axis in half voxels: `12` mirrors through the middle of voxel 12, and `12.5` between voxels 12 and 13. The **⌖** button next to each box mirrors through the voxel you last picked (Alt + left) and turns that mirror on. A mirror that is on shows as a see-through plane in the 3D view (red for x, green for y, blue for z) and as a dashed line in the slices it crosses. Where a mirrored voxel would land outside the box, it is left out.
 
 ### Slices
 
@@ -172,6 +191,13 @@ The **Noise** dock (a tab beside Brush) adds the variation that would take thous
 **Seed and Reroll.** The same seed gives the same voxels. **Reroll** undoes the last run, if nothing came after it, and runs again with a new seed: press it until you like the pattern.
 
 The dock ignores protection: protecting voxels only stops the assistant ([section 7](#7-working-with-an-assistant)), never your own edits.
+
+### Painting in another program
+
+**File → Export voxel PNG…** writes the model as pictures for any paint program (Aseprite, Photoshop, GIMP), and **File → Import voxel PNG…** reads them back.
+
+- **Views** show the model straight from the front, back, left, right, top and bottom, each voxel a block of **Size** pixels. Each view comes as three pictures: `.colour.png`, whose palette is the colour table, so the paint program offers only its colours; `.material.png`, one flat colour per material; and `.shaded.png`, the colours with depth, to look at. Paint on the colour or material picture and import it: each block you changed goes to the voxel it shows, as one undo step (Edit → Undo takes it all back). Erasing a block to transparent removes that voxel. Paint outside the figure is left out, because a view cannot tell how deep it would lie; the status bar says how many pixels that was. The views see most of a model's surface, but not all of it: hollows such as the inside of a hood stay with the 3D view.
+- **Slices** lay out every layer side by side, one pixel per voxel, the colours on one sheet and the materials on another. Nothing is lost: importing a sheet opens it as a new model (asking first about unsaved work).
 
 ---
 
@@ -284,7 +310,7 @@ To get a feel for it: pick a material, set roughness to 0.2 and watch the Render
 
 The Render dock shows the model in a GPU path tracer, standing on a wooden table. The picture starts noisy and settles within a second or two; the number at the bottom right counts the samples so far.
 
-- Drag to turn, middle drag or Shift + drag to move, wheel to zoom, double click to frame the model.
+- Drag to turn, middle drag or Shift + drag to move, wheel to zoom, double click to frame the model. With **Ortho** on (Render setup dock) the wheel widens or narrows the view instead.
 - Every edit, material change and light change shows at once.
 - A hidden or closed Render dock draws nothing and costs nothing.
 - Models with animated glows keep drawing, since they move.
@@ -331,6 +357,7 @@ Changing the direction or a colour turns the preset into **Custom**.
 Below them:
 
 - **Tilt blur**: the miniature-style blur above and below the model; off shows everything sharp.
+- **Ortho**: draws without perspective, with parallel rays, so parallel edges stay parallel and near and far voxels are the same size, as in the 3D edit view's **Ortho**. Switching keeps the model as large as it was. It needs a renderer from 29 October 2026 or later; with an older one the box is greyed out.
 - **Pause render** (`F9`): stops drawing and frees the GPU, keeping the last picture.
 
 ### The Export dock
@@ -345,6 +372,7 @@ Both draw in the Render dock, with its camera, light and setup. The corner count
 
 - **Width**, **Height**: up to 8192 each. By default the height follows the Render dock's shape; typing a height of your own lets go of it.
 - **Samples**: per pixel; more is smoother and slower. 512 to 1024 is enough for a final picture. 2160 × 2700 at 768 samples takes about a minute.
+- **Projection**: **Orthographic** draws the picture without perspective. It starts as the Render dock draws, and only the picture changes, not the dock.
 - **Finish**: `none` saves the picture as traced, which is right for judging colours. `film` adds a tone curve, soft bloom and a vignette. `night` adds strong bloom on glows and reds, cool shadows and grain.
 - **File**: a PNG, by default in `editor/outputs/`, named after the model.
 
@@ -497,6 +525,9 @@ The 3D-view keys work while the 3D edit view has the focus.
 | `A`, `B`, `E`, `P`, `L` | Attach, paint, erase, pick, protect |
 | `[`, `]` | Brush size down, up |
 | `Alt` + `Shift` + wheel | Brush size (3D view and slices) |
+| `5` | In the 3D view: orthographic on or off |
+| `1`, `3`, `7` (`Ctrl`: the other side) | In the 3D view: look from the front, right, top (back, left, bottom) |
+| `0`, `Ctrl+0` | In the 3D view: isometric 2:1 (pixel art), true isometric |
 | `R`, `Shift+R` | Turn the stamp, or the selected instance |
 | `Esc` | Stop stamping |
 | `F9` | Pause or resume the render |

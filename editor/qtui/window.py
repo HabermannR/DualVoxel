@@ -1,6 +1,7 @@
 """The main window: every view a movable dock (Qt Advanced Docking System) over one Document."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ import PySide6QtAds as QtAds
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from core.model import ROOT, SAVE_ROOT
+from core.scene import SUFFIX as PROJECT_SUFFIX
 from local_config import send_targets  # engine/, on the path through core.model
 from qtui.assistant_link import AssistantLink
 from qtui.document import Document
@@ -24,9 +26,20 @@ from qtui.noise_panel import install_noise_panel
 from qtui.render_view import RenderView
 from qtui.scene_docks import install_scenes
 from qtui.slice_view import SliceView
+from qtui.voxel_png_menu import install_voxel_png
 
 LAYOUT_VERSION = 11
 NEW_STARTS = ("Filled", "Floor", "Empty")  # how File > New starts a model; Filled first, as MagicaVoxel
+RECENT_MAX = 10  # files File > Open recent lists, newest first
+DROPPABLE = (".vx2", ".vox", PROJECT_SUFFIX)  # files the window opens when dropped on it
+
+
+def dropped_files(mime: QtCore.QMimeData) -> list[str]:
+    """The local files in a drag the window can open: models (.vx2, .vox) and projects."""
+    if not mime.hasUrls():
+        return []
+    paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+    return [p for p in paths if p.lower().endswith(DROPPABLE)]
 
 
 class EditorWindow(QtWidgets.QMainWindow):
@@ -90,6 +103,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.setup_panel = install_render_setup_panel(self)  # surroundings, floor, tilt blur, pause
         self.export_panel = install_export_panel(self)  # pictures and orbit videos
         self.export_panel.picture_requested.connect(self.render_picture_dialog)
+        self.voxel_png = install_voxel_png(self)  # File > Export / Import voxel PNG…
         view = next(m for m in self.menuBar().findChildren(QtWidgets.QMenu) if m.title() == "&View")
         first_separator = next((a for a in view.actions() if a.isSeparator()), None)  # after the docks listed
         for title in ("Brush", "Light", "Render setup", "Export"):  # docks made after the menus
@@ -104,9 +118,35 @@ class EditorWindow(QtWidgets.QMainWindow):
         if saved is not None:
             self.restoreGeometry(self.settings.value("geometry"))
             self.layout_restored = bool(self.dock_manager.restoreState(saved, LAYOUT_VERSION))
+        self.edit_view.set_ortho(self.settings.value("edit_ortho", False, type=bool))
+        self.edit_view.ortho_box.toggled.connect(lambda on: self.settings.setValue("edit_ortho", bool(on)))
+        self.edit_view.set_background(self.settings.value("edit_background", "Dark", type=str))
+        self.edit_view.background_changed.connect(lambda name: self.settings.setValue("edit_background", name))
         self.link_action.setChecked(self.settings.value("assistant_link", True, type=bool))
         self.set_assistant_link(self.link_action.isChecked())
         self.update_info()
+        self.setAcceptDrops(True)  # a .vx2, .vox or project dropped anywhere on the window opens
+
+    # --- drag and drop ---------------------------------------------------------------------
+    def dragEnterEvent(self, event):
+        if dropped_files(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if dropped_files(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Open the first model or project dropped, as File > Open recent does (asking first about unsaved work);
+        after the drop has finished, so a question does not hold up the program the file came from."""
+        paths = dropped_files(event.mimeData())
+        if not paths:
+            return
+        event.acceptProposedAction()
+        if len(paths) > 1:
+            self.statusBar().showMessage(f"Opened {Path(paths[0]).name}; one file at a time "
+                                         f"({len(paths) - 1} more dropped)", 6000)
+        QtCore.QTimer.singleShot(0, lambda: self.open_recent(paths[0]))
 
     def default_widths(self):
         """Slices narrow, the 3D and render views wide, the colours a column (equal splits give them half)."""
@@ -153,6 +193,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         file = bar.addMenu("&File")
         self._action(file, "New…", self.new_dialog, "Ctrl+N")
         self._action(file, "Open…", self.open_dialog, "Ctrl+O")
+        self.recent_menu = file.addMenu("Open recent")
+        self.recent_menu.aboutToShow.connect(self.rebuild_recent_menu)
         self._action(file, "Save", self.save, "Ctrl+S")
         self._action(file, "Save as…", self.save_as, "Ctrl+Shift+S")
         file.addSeparator()
@@ -259,6 +301,63 @@ class EditorWindow(QtWidgets.QMainWindow):
             self.doc.open(path)
         except Exception as error:
             QtWidgets.QMessageBox.warning(self, "Open", str(error))
+            return
+        self.remember_recent(path)
+
+    # --- recent files: models and projects, newest first (in the settings) ----------------------
+    def recent_files(self) -> list[str]:
+        value = self.settings.value("recent_files", [])
+        if isinstance(value, str):  # an INI file gives a list of one back as a string
+            value = [value]
+        return [str(p) for p in value or []]
+
+    def remember_recent(self, path) -> None:
+        """Put a file opened or saved at the top of File > Open recent (once, at most RECENT_MAX)."""
+        path = str(Path(path).resolve())
+        key = os.path.normcase(path)
+        kept = [p for p in self.recent_files() if os.path.normcase(p) != key]
+        self.settings.setValue("recent_files", [path, *kept][:RECENT_MAX])
+
+    def forget_recent(self, path=None) -> None:
+        """Take a file off the list, or clear it (path None)."""
+        kept = [] if path is None else [p for p in self.recent_files()
+                                        if os.path.normcase(p) != os.path.normcase(str(path))]
+        self.settings.setValue("recent_files", kept)
+
+    def rebuild_recent_menu(self) -> None:
+        """name — folder for each file (the whole path as its tip); a file gone since says so."""
+        menu = self.recent_menu
+        menu.clear()
+        paths = self.recent_files()
+        for path in paths:
+            p = Path(path)
+            missing = not p.exists()
+            action = menu.addAction(f"{p.name} — {p.parent.name or p.parent}" + ("  (missing)" if missing else ""))
+            action.setToolTip(path)
+            action.triggered.connect(lambda _=False, f=path: self.open_recent(f))
+        if not paths:
+            menu.addAction("(none yet)").setEnabled(False)
+        menu.addSeparator()
+        clear = menu.addAction("Clear list", lambda: self.forget_recent())
+        clear.setEnabled(bool(paths))
+        menu.setToolTipsVisible(True)
+
+    def open_recent(self, path) -> None:
+        """Open a recent model or project, after the ask about unsaved work it would replace; a missing file
+        can be taken off the list."""
+        if not Path(path).exists():
+            Button = QtWidgets.QMessageBox.StandardButton
+            if QtWidgets.QMessageBox.question(self, "Open recent", f"{path}\nis no longer there. Take it off "
+                                              "the list?") == Button.Yes:
+                self.forget_recent(path)
+            return
+        question = f"Save before opening {Path(path).name}?"
+        if str(path).endswith(PROJECT_SUFFIX):  # replaces the project and the model docks
+            go_on = self.ask_save(self.unsaved(), question)
+        else:  # replaces only the model (a project's part stays in its project)
+            go_on = self.ask_save(self.unsaved()[:1] if self.model_unsaved() else [], question, model_only=True)
+        if go_on:
+            self.open_path(path)
 
     def open_dialog(self):
         start = str(self.doc.model.path.parent if self.doc.model.path else ROOT / "assets")
@@ -288,6 +387,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Save", str(error))
             return
         self._mark_saved()
+        self.remember_recent(target)
         self.statusBar().showMessage(f"Saved {target}", 4000)
         self.update_info()
 
@@ -302,10 +402,10 @@ class EditorWindow(QtWidgets.QMainWindow):
         dialog, read = self.picture_form()
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
-        path, width, height, samples, look = read()
+        path, width, height, samples, look, ortho = read()
         if not path:
             return
-        problem = self.render_view.render_still(path, width, height, samples, look)
+        problem = self.render_view.render_still(path, width, height, samples, look, ortho)
         if problem:
             QtWidgets.QMessageBox.warning(self, "Render picture", problem)
         else:
@@ -313,7 +413,7 @@ class EditorWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Rendering a {width} x {height} picture…", 4000)
 
     def picture_form(self):
-        """(the Render picture dialog, a function reading (path, width, height, samples, look) from it)."""
+        """(the Render picture dialog, a function reading (path, width, height, samples, look, ortho) from it)."""
         from postprocess import LOOKS
         from qtui.render_view import STILL_LIMITS
         max_width, max_height, max_samples = STILL_LIMITS
@@ -351,6 +451,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         look_box.addItems(list(LOOKS))
         look_box.setToolTip("none: as traced. film: tone curve, soft bloom, vignette. night: strong bloom on "
                             "glows and reds, cool shadows, grain")
+        ortho_box = QtWidgets.QCheckBox("Orthographic (no perspective)")
+        ortho_box.setChecked(view.camera.ortho)  # as the Render dock draws, by default
+        ortho_box.setEnabled(view.has_ortho)
+        ortho_box.setToolTip("Parallel rays: parallel edges stay parallel, the model as large as in the dock"
+                             if view.has_ortho else "The orthographic view needs a newer renderer")
         model_path = self.doc.model.path
         stem = Path(model_path).stem if model_path else "picture"
         path_box = QtWidgets.QLineEdit(str(ROOT / "editor" / "outputs" / f"{stem}.png"))
@@ -370,6 +475,7 @@ class EditorWindow(QtWidgets.QMainWindow):
         form.addRow("", keep)
         form.addRow("Samples", samples_box)
         form.addRow("Finish", look_box)
+        form.addRow("Projection", ortho_box)
         form.addRow("File", file_row)
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok
                                              | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
@@ -383,9 +489,10 @@ class EditorWindow(QtWidgets.QMainWindow):
                 path += ".png"
             if path:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
-            return path, width_box.value(), height_box.value(), samples_box.value(), look_box.currentText()
+            return (path, width_box.value(), height_box.value(), samples_box.value(), look_box.currentText(),
+                    ortho_box.isChecked())
         dialog.widgets = {"width": width_box, "height": height_box, "keep": keep, "samples": samples_box,
-                          "look": look_box, "path": path_box}  # for tests
+                          "look": look_box, "ortho": ortho_box, "path": path_box}  # for tests
         return dialog, read
 
     def render_video(self):
@@ -426,14 +533,21 @@ class EditorWindow(QtWidgets.QMainWindow):
 
     def confirm_close(self) -> bool:
         """Ask before unsaved work is lost: Save (then close if all of it saved), Discard, or Cancel."""
-        lines = self.unsaved()
+        return self.ask_save(self.unsaved(), "Save before closing?")
+
+    def ask_save(self, lines: list[str], question: str, model_only: bool = False) -> bool:
+        """Whether to go on, asking first when `lines` (unsaved's) name work that would be lost. Save saves
+        all of it, or with model_only the model alone (Ctrl+S's save)."""
         if not lines:
             return True
         Button = QtWidgets.QMessageBox.StandardButton
         answer = QtWidgets.QMessageBox.warning(
-            self, "Unsaved changes", "Save before closing?\n\n" + "\n".join(lines),
+            self, "Unsaved changes", question + "\n\n" + "\n".join(lines),
             Button.Save | Button.Discard | Button.Cancel, Button.Save)
         if answer == Button.Save:
+            if model_only:
+                self.save()
+                return not self.model_unsaved()
             self.save_unsaved()
             return not self.unsaved()  # a save cancelled or failed: stay open
         return answer == Button.Discard

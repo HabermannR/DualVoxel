@@ -19,9 +19,14 @@ class FakeRenderer:
     """Fills the picture with one colour, `step` samples a call, as render_frame does in capture mode."""
     reconstruction = 1
     centre = (0.0, 0.0, 0.0)
+    has_projection = True
 
     def __init__(self, step=100):
         self.step, self.done, self.captures, self.views, self.times = step, 0, [], [], []
+        self.projections = []
+
+    def projection(self, ortho, half_height=1.0):
+        self.projections.append((ortho, half_height))
 
     def capture_time(self, seconds):
         self.times.append(seconds)
@@ -296,9 +301,12 @@ class WindowTests(unittest.TestCase):
             self.assertFalse(boxes["keep"].isChecked())  # a height of one's own
             boxes["look"].setCurrentText("night")
             boxes["path"].setText(str(Path(tempfile.mkdtemp()) / "shot"))
-            path, width, height, samples, look = read()
+            self.assertFalse(boxes["ortho"].isChecked())  # as the Render dock draws
+            boxes["ortho"].setChecked(True)
+            path, width, height, samples, look, ortho = read()
             self.assertTrue(path.endswith("shot.png"))
-            self.assertEqual((width, height, samples, look), (2000, 1000, 512, "night"))
+            self.assertEqual((width, height, samples, look, ortho), (2000, 1000, 512, "night", True))
+            self.assertIn("Ortho", [b.text() for b in window.setup_panel.findChildren(QtWidgets.QCheckBox)])
             window.render_view.still = {"rgba": np.zeros((4, 4, 4), np.uint8), "done": 0, "samples": 1}
             window.render_view.still_changed.emit(True)
             self.assertEqual(export.picture_button.text(), "Cancel picture")

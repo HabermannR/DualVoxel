@@ -106,6 +106,9 @@ class VoxelRenderer:
         d.renderer_set_capture_samples.argtypes = [_I]
         if hasattr(d, "renderer_set_capture_time"):  # renderers from 27 October 2026 on
             d.renderer_set_capture_time.argtypes = [_F]
+        if hasattr(d, "renderer_set_projection"):  # renderers from 29 October 2026 on: the orthographic view
+            d.renderer_set_projection.argtypes = [_I, _F]
+            d.renderer_set_fov.argtypes = [_F]
         if hasattr(d, "renderer_set_floor"):  # with the floors and HDR environments
             d.renderer_set_floor.argtypes = [_I, _F, _F, _F, _F]
             d.renderer_set_environment.argtypes = [ctypes.POINTER(_F), _I, _I]
@@ -182,6 +185,26 @@ class VoxelRenderer:
     def tilt_blur(self, enabled: bool) -> None:
         """The tilt-shift blur above and below the model (on by default)."""
         self.dll.renderer_set_tilt_blur(enabled)
+
+    @property
+    def has_projection(self) -> bool:
+        """Whether this renderer build has the orthographic view and a field of view of one's own."""
+        return hasattr(self.dll, "renderer_set_projection")
+
+    def projection(self, ortho: bool, half_height: float = 1.0) -> None:
+        """Parallel rays (ortho), the view half_height world units from its centre to its top edge, or the
+        perspective view (the default). The rays start on the plane through the eye, so the eye stands in
+        front of the model. A renderer from before it draws perspective only."""
+        if not self.has_projection:
+            if ortho:
+                raise RuntimeError("This renderer build draws in perspective only; a newer one has the orthographic view.")
+            return
+        self.dll.renderer_set_projection(int(bool(ortho)), float(half_height))
+
+    def fov(self, degrees: float = 45.0) -> None:
+        """The perspective view's vertical field of view in degrees (45 by default; older renderers: 45 only)."""
+        if self.has_projection:
+            self.dll.renderer_set_fov(float(degrees))
 
     def show(self, colour: np.ndarray, material: np.ndarray, materials: list[dict], colors: list[dict],
              asset: int = 1, entity: int = 1) -> int:

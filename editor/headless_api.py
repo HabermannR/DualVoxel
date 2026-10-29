@@ -18,9 +18,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from core import noise  # noqa: E402
+from core import noise, voxel_png  # noqa: E402
+from core.brushes import FILL_MATCHES, FILL_SCOPES, flood, line  # noqa: E402
 from core.lights import apply_preset, apply_state, apply_surroundings, check_surroundings, preset_name  # noqa: E402
-from core.model import ANCHORS, Model, ROOT as PIPELINE, transform_plane  # noqa: E402
+from core.model import ANCHORS, Model, ROOT as PIPELINE, transform_plane, vx2  # noqa: E402
 from logic.tools import commit_shape  # noqa: E402
 # here, on the main thread: loaded first on the MCP server's worker thread, scipy's DLLs hang on Windows
 from postprocess import LOOKS, finish  # noqa: E402
@@ -281,8 +282,7 @@ class VoxelEditor:
         self._check_inside([min(a, b) for a, b in zip(start, end)], [max(a, b) for a, b in zip(start, end)])
         if type(radius) is not int or not 0 <= radius <= 32:
             raise ValueError("radius is a whole number of voxels, 0-32")
-        steps = max(abs(b - a) for a, b in zip(start, end)) + 1
-        points = np.rint(np.linspace(start, end, steps)).astype(int)
+        points = line(start, end)  # as the editor's line brush
         mask = np.zeros(self.model.colour.shape, dtype=bool)
         mask[points[:, 2], points[:, 1], points[:, 0]] = True
         if radius:
@@ -290,6 +290,34 @@ class VoxelEditor:
             r = np.arange(-radius, radius + 1)
             ball = (r[:, None, None] ** 2 + r[None, :, None] ** 2 + r[None, None, :] ** 2) <= radius * radius + radius
             mask = ndimage.binary_dilation(mask, structure=ball)
+        return self._write(mask, colour, material)
+
+    @synchronized
+    def flood_fill(self, point, colour, material=0, reach="connected", axis="z", match="colour", diagonal=False,
+                   tolerance=0):
+        """The editor's fill brush from a voxel. At a solid voxel: the voxels connected to it that match it take
+        colour and material (colour 0 erases); match "colour" (its colour, or any within `tolerance` ΔE of
+        it), "colour and material", or "solid" (any). At an empty cell: the enclosed hollow around it fills
+        (a space open to the model's sides, the floor apart, is refused). reach: "connected" in 3D, "layer"
+        (only in the point's layer across `axis`) or "model" (every matching voxel, connected or not)."""
+        self._check_box(point, point)
+        self._check_inside(point, point)
+        if axis not in ("x", "y", "z") or reach not in FILL_SCOPES or match not in FILL_MATCHES:
+            raise ValueError(f"reach is {', '.join(FILL_SCOPES)}; axis x, y or z; match "
+                             f"{', '.join(FILL_MATCHES)}")
+        if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) or not 0 <= tolerance <= 50:
+            raise ValueError("tolerance is a colour difference (ΔE) from 0 to 50")
+        x, y, z = point
+        empty = not self.model.colour[z, y, x]
+        if empty and not colour:
+            raise ValueError("The point is empty: give a colour to fill the hollow there with.")
+        points = flood(self.model.colour, self.model.material, point, empty, reach, "xyz".index(axis), match,
+                       bool(diagonal), self.model.table.labs, tolerance)
+        if not len(points):
+            raise ValueError("That empty space is open to the model's sides: only an enclosed hollow fills. "
+                             "Try reach \"layer\" for a hollow in one layer.")
+        mask = np.zeros(self.model.colour.shape, dtype=bool)
+        mask[points[:, 2], points[:, 1], points[:, 0]] = True
         return self._write(mask, colour, material)
 
     @synchronized
@@ -314,16 +342,21 @@ class VoxelEditor:
         return self._finish(self.model._edit(lambda cc, mm: (cc.__setitem__((z, y, x), c), mm.__setitem__((z, y, x), m))))
 
     @synchronized
-    def mirror(self, axis="x", keep="low"):
+    def mirror(self, axis="x", keep="low", plane=None):
         """Copy one half of the model onto the other across its centre (a symmetric figure: draw one side).
-        keep: the half that stays, "low" (x below the centre) or "high"."""
+        keep: the half that stays, "low" (x below the centre) or "high". plane: mirror across another plane
+        than the centre, a coordinate on the axis in half voxels (12: through voxel 12's centre, 12.5: between
+        voxels 12 and 13); what would land outside the model is left out."""
         if axis not in ("x", "y", "z") or keep not in ("low", "high"):
             raise ValueError("axis is x, y or z; keep is low or high")
         dim = {"x": 2, "y": 1, "z": 0}[axis]
         n = self.model.colour.shape[dim]
+        if plane is not None and (isinstance(plane, bool) or not isinstance(plane, (int, float))
+                                  or 2 * plane != round(2 * plane) or not 0 <= plane <= n - 1):
+            raise ValueError(f"plane is a coordinate in half voxels from 0 to {n - 1}, e.g. 12 or 12.5")
         index = np.arange(n)
-        other = n - 1 - index
-        target = index > other if keep == "low" else index < other
+        other = (n - 1 if plane is None else round(2 * plane)) - index
+        target = (index > other if keep == "low" else index < other) & (other >= 0) & (other < n)
 
         def apply(c, m):
             for plane in (c, m):
@@ -729,6 +762,142 @@ class VoxelEditor:
         self._follow()
         return {"changed": changed, **self.info()}
 
+    # --- voxel PNGs: the model as pictures to paint on and read back (core/voxel_png.py) ----------
+    @staticmethod
+    def _png_fingerprints(model):
+        colours, materials = vx2.fingerprints(model.colors, model.materials)
+        return colours.hex(), materials.hex()
+
+    @synchronized
+    def export_slices(self, base, model: Model | None = None):
+        """The whole model as two sheets of its layers, one pixel per voxel: <base>.slices-XxYxZ.colour.png
+        (indexed: the colour table is its palette) and .material.png (false colours). Nothing is lost:
+        import_slices reads them back exactly. model: another model (the open editor's copy)."""
+        model = model or self.model
+        files = voxel_png.export_slices(model.colour, model.material, model.table, Path(base),
+                                        self._png_fingerprints(model))
+        return {"files": [str(p) for p in files], "size": list(model.size)}
+
+    @synchronized
+    def import_slices(self, path):
+        """A slice sheet (the .colour.png; its .material.png beside it too, if there) as a new, unsaved model
+        on this model's colour table; colours not on it take the nearest slot."""
+        known = lambda mid: 0 <= mid < len(self.model.materials)  # noqa: E731  (a new model has none of its own)
+        colour, material, report = voxel_png.import_slices(Path(path), self.model.table, known)
+        return {**report, **self.load_volume(colour, material)}
+
+    @synchronized
+    def export_views(self, base, views=None, scale=8, render=False, samples=64, light="Overcast",
+                     model: Model | None = None):
+        """The model seen straight along each axis, `scale` pixels per voxel, to paint on: per view
+        <base>.<view>.colour.png (indexed: the colour table), .material.png (false colours) and
+        .shaded.png (colours with depth, to look at). render: also .render.png, the path tracer's picture of
+        the same view under a Light dock preset without the floor (only to look at; starts the engine).
+        views: of voxel_png.VIEWS, default all six."""
+        model = model or self.model
+        views = list(views or voxel_png.VIEWS)
+        if any(v not in voxel_png.VIEWS for v in views):
+            raise ValueError(f"views are of {', '.join(voxel_png.VIEWS)}")
+        if not (model.colour > 0).any():
+            raise ValueError("The model is empty.")
+        files = voxel_png.export_views(model.colour, model.material, model.table, Path(base), views, scale,
+                                       self._png_fingerprints(model))
+        if render:
+            for view in views:
+                target = Path(f"{base}.{view}.render.png")
+                target.write_bytes(self._render_view(model, view, scale, samples, light))
+                files.append(target)
+        return {"files": [str(p) for p in files], "views": views, "scale": scale}
+
+    def _render_view(self, model, view, scale, samples, light):
+        """A view as the path tracer draws it: parallel rays along the view's axis, each voxel `scale` pixels."""
+        self._render(0, 0, 16, 16, 1, light, model, None, "none", PICTURE_LIMITS, {"floor": "none"})  # engine, light
+        engine = self._engine
+        forward, right, up = (np.array(v, dtype=np.float64) for v in voxel_png.VIEWS[view])
+        size = np.array(model.size)  # voxels along x, y, z
+        cols, rows = int(size[np.flatnonzero(right)[0]]), int(size[np.flatnonzero(up)[0]])
+        width, height = cols * scale, rows * scale
+        if not (16 <= width <= FILE_LIMITS[0] and 16 <= height <= FILE_LIMITS[1] and 1 <= samples <= FILE_LIMITS[2]):
+            raise ValueError(f"a render of {width} x {height} pixels, {samples} samples, is out of range")
+        voxel = engine.size[2] / model.size[2]  # world units per voxel
+        centre = np.array(engine.centre)
+        eye = centre - forward * (float(max(engine.size)) + 1.0)
+        engine.projection(True, rows * voxel / 2)
+        try:
+            rgba = engine.render_camera(width, height, eye, forward, right, up, samples)
+        finally:
+            engine.projection(False)
+        from PIL import Image
+        out = io.BytesIO()
+        Image.fromarray(rgba[..., :3].copy()).save(out, format="PNG")
+        return out.getvalue()
+
+    REFERENCE_ALIASES = {"side": "left"}  # the figure's right side, as a concept's side view shows it
+
+    @synchronized
+    def reference_views(self, base, views=("front", "side", "back"), iso=True, width=864, height=1152,
+                        samples=256, light="Overcast", model: Model | None = None):
+        """Pictures of the model to start new concept images from (image-to-image) or to compare them with:
+        each view of `views` (voxel_png.VIEWS, or "side" for "left") flat from the voxels, colours with
+        depth, and with iso a three-quarter view from the front left and above from the path tracer, soft
+        light, no floor. Each on the concept images' light grey, width x height, the figure about as large
+        as in a concept. Saved as <base>.<view>.reference.png (and .iso.reference.png)."""
+        model = model or self.model
+        names = [self.REFERENCE_ALIASES.get(v, v) for v in views]
+        if any(v not in voxel_png.VIEWS for v in names):
+            raise ValueError(f"views are of {', '.join(voxel_png.VIEWS)} or side")
+        if not (64 <= width <= FILE_LIMITS[0] and 64 <= height <= FILE_LIMITS[1]):
+            raise ValueError(f"width and height are 64-{FILE_LIMITS[0]}")
+        if not (model.colour > 0).any():
+            raise ValueError("The model is empty.")
+        Path(base).parent.mkdir(parents=True, exist_ok=True)
+        files = []
+        for asked, view in zip(views, names):
+            slots, _, _, found, depth = voxel_png.view_planes(model.colour, model.material, view)
+            picture = voxel_png.shaded(slots, found, depth, model.table.rgb)
+            target = Path(f"{base}.{asked}.reference.png")
+            voxel_png.framed(picture, found, (width, height)).save(target)
+            files.append(str(target))
+        if iso:
+            self._render(0, 0, 16, 16, 1, light, model, None, "none", PICTURE_LIMITS, {"floor": "none"})
+            engine = self._engine
+            if not 1 <= samples <= FILE_LIMITS[2]:
+                raise ValueError(f"samples 1-{FILE_LIMITS[2]}")
+            eye, forward, right, up = engine.orbit_camera(-45, 30)
+            engine.projection(True, 0.62 * max(engine.size) * max(1.0, (height / width) / (1152 / 864)))
+            try:
+                rgba = engine.render_camera(width, height, eye, forward, right, up, samples)
+            finally:
+                engine.projection(False)
+            from PIL import Image
+            target = Path(f"{base}.iso.reference.png")
+            Image.fromarray(rgba[..., :3].copy()).save(target)
+            files.append(str(target))
+        return {"files": files}
+
+    @synchronized
+    def import_views(self, paths):
+        """Painted view pictures back onto the model, as one undo step: each changed pixel's colour or
+        material goes to the first voxel along its line of sight (transparent colour erases it); paint where
+        the view shows no voxel is left out. Protected voxels stay. Returns what each view changed."""
+        points, colours, materials, report = voxel_png.import_views(
+            self.model.colour, self.model.material, [Path(p) for p in paths], self.model.table,
+            self.model.has_material)
+        x, y, z = points.T if len(points) else (np.zeros(0, int),) * 3
+
+        def apply(c, m):
+            c[z, y, x] = colours
+            m[z, y, x] = materials
+        return {**report, **self._finish(self.model._edit(apply))}
+
+    @staticmethod
+    def output_base(name):
+        """outputs/<name> for pictures named from it (export_slices, export_views), kept inside outputs."""
+        target = (OUTPUTS / name).resolve()
+        if not target.is_relative_to(OUTPUTS.resolve()) or not target.name:
+            raise ValueError("Give a plain name; the pictures are saved inside the editor's outputs folder.")
+        return target
+
     # --- pictures ------------------------------------------------------------------------
     @synchronized
     def preview_png(self, model: Model | None = None):
@@ -745,8 +914,8 @@ class VoxelEditor:
                    model: Model | None = None, view: dict | None = None, look="none", surroundings=None):
         """The model in the path tracer under one of the Light dock's presets (Golden hour, Day, Noon,
         Overcast, Night). model: another model to draw, else this one. view: the editor's Render dock
-        camera and light ({"eye", "forward", "right", "up", "light"}) instead of yaw, pitch, the preset and
-        the surroundings. look: a finish from postprocess.LOOKS ("none", "film", "night"). surroundings:
+        camera and light ({"eye", "forward", "right", "up", "light"}; "ortho" and "ortho_height" when it draws
+        with parallel rays) instead of yaw, pitch, the preset and the surroundings. look: a finish from postprocess.LOOKS ("none", "film", "night"). surroundings:
         core.lights.SURROUNDINGS' keys (an HDR environment instead of the sun and sky, and the floor);
         None, the sun and sky on the wooden table."""
         return self._render(yaw, pitch, width, height, samples, light, model, view, look, PICTURE_LIMITS, surroundings)
@@ -774,9 +943,11 @@ class VoxelEditor:
         if view is None:
             apply_preset(self._engine, light)
             apply_surroundings(self._engine, surroundings)
+            self._engine.projection(False)
             rgba = self._engine.render(width, height, yaw_deg=yaw, pitch_deg=pitch, samples=samples)
         else:
             apply_state(self._engine, view["light"])
+            self._engine.projection(bool(view.get("ortho")), float(view.get("ortho_height", 1.0)))
             rgba = self._engine.render_camera(width, height, view["eye"], view["forward"], view["right"], view["up"],
                                               samples)
         out = io.BytesIO()
