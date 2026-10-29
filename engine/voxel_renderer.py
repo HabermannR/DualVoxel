@@ -57,20 +57,22 @@ def material_fields(m: dict) -> list[float]:
 
 if sys.platform == "win32":
     DLL_NAMES = ("VoxelRenderer.dll", "SpellRenderer.dll")  # the second: builds before the neutral name
-else:  # no build for macOS or Linux yet: the editor runs without the Render dock there
+else:  # a Linux build (without DLSS); none for macOS yet: the editor runs without the Render dock there
     DLL_NAMES = ("libVoxelRenderer.dylib" if sys.platform == "darwin" else "libVoxelRenderer.so",)
 # MSVC's exception code: a C++ exception left a renderer build from before renderer_last_error.
 CPP_EXCEPTION = 0xE06D7363
 REQUIREMENTS = ("The renderer needs a GPU with hardware ray tracing under Vulkan 1.3 (NVIDIA RTX 20 or newer, "
-                "AMD RX 6000 or newer, Intel Arc) and a current graphics driver.")
+                "AMD RX 6000 or newer, Intel Arc) and a current graphics driver."
+                + (" Without one, Mesa's lavapipe (mesa-vulkan-drivers) draws the same picture on the CPU, "
+                   "many times slower." if sys.platform.startswith("linux") else ""))
 
 
 class VoxelRenderer:
     def __init__(self, bin_dir: Path | None = None):
         bin_dir = Path(bin_dir) if bin_dir else local_config.renderer_dir()
         dll = next((bin_dir / name for name in DLL_NAMES if (bin_dir / name).exists()), None)
-        if dll is None and sys.platform != "win32":
-            raise FileNotFoundError(f"The renderer ships for Windows only so far (no {DLL_NAMES[0]} in "
+        if dll is None and sys.platform == "darwin":
+            raise FileNotFoundError(f"The renderer ships for Windows and Linux only so far (no {DLL_NAMES[0]} in "
                                     f"{bin_dir}); everything else in the editor works without it.")
         if dll is None:
             raise FileNotFoundError(f"The renderer is missing: no {DLL_NAMES[0]} in {bin_dir}. Put the "

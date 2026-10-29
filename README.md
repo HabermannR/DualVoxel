@@ -38,16 +38,17 @@ Gas is a volume that light passes through and scatters in. Below, mist lies betw
 
 ## Getting started
 
-The editor is Python (PySide6, VTK) and runs on Windows, macOS 13 or newer and Linux; its tests run on macOS and Linux with every push. Outside Windows it works without the render view, since the renderer ships for Windows only (see the [reference](editor/docs/reference.md#setup-the-renderer-and-local-settings)). Day-to-day use has so far been on Windows; if something feels wrong on a Mac, please open an issue. The render view needs Windows and a Vulkan GPU with hardware ray tracing:
+The editor is Python (PySide6, VTK) and runs on Windows, macOS 13 or newer and Linux; its tests run on macOS and Linux with every push, the Linux ones with path-traced renders. The renderer ships for Windows and Linux; on macOS the editor works without the render view (see the [reference](editor/docs/reference.md#setup-the-renderer-and-local-settings)). Day-to-day use has so far been on Windows; if something feels wrong on a Mac or on Linux, please open an issue. The render view needs a Vulkan GPU with hardware ray tracing:
 
 - **NVIDIA RTX:** the picture is denoised by DLSS Ray Reconstruction, so it is clean while you move.
 - **Other ray-tracing GPUs** (AMD RX 6000 or newer, Intel Arc): the renderer falls back to an accumulating preview that is noisy while you move and sharpens within seconds once the view is still. This path has not yet been tested on AMD or Intel cards.
-- **No hardware ray tracing** (for example Intel's integrated UHD and Iris Xe graphics): the render view cannot run. The Render dock says which GPU it found and what that GPU lacks; drawing, the edit views and everything else work without it.
+- **Linux:** the renderer is built without DLSS, so it draws the accumulating preview on any GPU. Without a ray-tracing GPU, Mesa's lavapipe (`mesa-vulkan-drivers`) draws the same picture on the CPU, about twenty times slower: enough for stills, slow for the live view.
+- **No hardware ray tracing** (for example Intel's integrated UHD and Iris Xe graphics) on Windows: the render view cannot run. The Render dock says which GPU it found and what that GPU lacks; drawing, the edit views and everything else work without it.
 
 If the Render dock shows an error you cannot place, please open an issue with its message and your GPU.
 
 1. Install [uv](https://docs.astral.sh/uv/), then in the `editor` folder run `uv sync`.
-2. Download the renderer zip from the releases and unpack it into `editor/renderer/`.
+2. Download the renderer zip from the releases (`renderer-win64-…` or `renderer-linux-x64-…`) and unpack it into `editor/renderer/`.
 3. Start the editor with an example model (the alchemist; `corpse.vx2` and `skeleton.vx2` are there too):
 
    ```
@@ -86,4 +87,4 @@ The same functions are available from Python (`headless_api.VoxelEditor`) and th
 
 ## Licence
 
-The editor's source is under the [MIT licence](LICENSE). The renderer (`VoxelRenderer.dll` and its shaders) is distributed separately as a binary under its own terms, which come with it; it includes NVIDIA DLSS, under NVIDIA's licence.
+The editor's source is under the [MIT licence](LICENSE). The renderer (`VoxelRenderer.dll` or `libVoxelRenderer.so` and its shaders) is distributed separately as a binary under its own terms, which come with it; the Windows build includes NVIDIA DLSS, under NVIDIA's licence.

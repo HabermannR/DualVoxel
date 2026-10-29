@@ -1,6 +1,7 @@
-# The editor's tests on macOS and Linux, without the renderer (it ships for Windows only):
-# SKIP_GPU=1 leaves out the path-traced checks; the Qt window tests run on a real display
-# (the macOS runner's own, Xvfb with Openbox on Linux).
+# The editor's tests on macOS and Linux, without the renderer: SKIP_GPU=1 leaves out the
+# path-traced checks; the Qt window tests run on a real display (the macOS runner's own, Xvfb
+# with Openbox on Linux). The render job runs the path-traced tests on Linux, on the CPU:
+# the renderer from the newest release with a Linux zip, under Mesa's lavapipe.
 name: tests
 
 on:
@@ -37,3 +38,46 @@ jobs:
         if: runner.os == 'Linux'
         # a window manager makes the editor's window the active one, so focus (and undo by focus) works
         run: xvfb-run -a -s "-screen 0 1920x1080x24" sh -c 'openbox & sleep 2; .venv/bin/python -m unittest discover -s tests'
+
+  render:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: editor
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Renderer (the newest release's Linux zip)
+        id: renderer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/${{ github.repository }}/releases" \
+            --jq '[.[] | select(any(.assets[]; .name | startswith("renderer-linux-x64-")))][0].tag_name // empty')
+          if [ -z "$tag" ]; then
+            echo "::warning::No release has a renderer-linux-x64 zip yet: the path-traced tests did not run."
+            exit 0
+          fi
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern 'renderer-linux-x64-*.zip' --dir "$RUNNER_TEMP"
+          unzip -q "$RUNNER_TEMP"/renderer-linux-x64-*.zip -d renderer
+          echo "zip=$(basename "$RUNNER_TEMP"/renderer-linux-x64-*.zip)" >> "$GITHUB_OUTPUT"
+      - name: Lavapipe, Qt's and VTK's system libraries
+        if: steps.renderer.outputs.zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
+      # Mesa compiles the path tracer's shader for the CPU once, for some minutes, and keeps it here.
+      - uses: actions/cache@v4
+        if: steps.renderer.outputs.zip
+        with:
+          path: ~/.cache/mesa_shader_cache
+          key: mesa-${{ steps.renderer.outputs.zip }}
+      - run: uv sync --frozen
+        if: steps.renderer.outputs.zip
+      - name: Path-traced tests (lavapipe)
+        if: steps.renderer.outputs.zip
+        working-directory: editor/tests
+        env:
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
+          QT_QPA_PLATFORM: offscreen
+        run: ../.venv/bin/python -m unittest test_gas test_headless test_live_link test_surroundings
