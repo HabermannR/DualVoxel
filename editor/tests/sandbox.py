@@ -15,6 +15,14 @@ os.environ["DUALVOXEL_LINK_FILE"] = str(LINK_FILE)  # for live_link and for an M
 if "live_link" in sys.modules:  # imported before this: LINK_FILE is read once at import
     sys.modules["live_link"].LINK_FILE = LINK_FILE
 
+# editor.local.json: a temporary copy, so a test that saves keys leaves the user's file alone
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "engine"))
+import local_config  # noqa: E402
+_config = Path(tempfile.mkdtemp()) / "editor.local.json"
+if local_config.CONFIG.exists():
+    _config.write_text(local_config.CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+local_config.CONFIG = _config
+
 try:
     from PySide6 import QtCore
 except ImportError:

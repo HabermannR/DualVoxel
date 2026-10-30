@@ -8,8 +8,10 @@ ones lie in the layer, volumes reach the layers around it), box a rectangle in
 the layer (drag it), ellipsoid the ellipsoid over a dragged rectangle, centred
 on the layer, face the connected area of the clicked cell's colour in the
 layer, and the sculpting brushes; mirroring as set. A stamp is a 3D-view brush.
-The wheel moves the layer (Alt + Shift + wheel: the brush size). Empty cells show the nearest voxel behind
-the layer, dimmed, so the slice keeps its place in the figure. With the pick
+The wheel moves the layer (Alt + Shift + wheel: the brush size), Ctrl + wheel zooms around the cursor,
+middle drag or Shift + right drag pans, Home or a middle double click fits the layer again; a stroke that
+reaches the edge pans along. Empty cells show the nearest voxel behind the layer, dimmed, so the slice keeps
+its place in the figure. With the pick
 tool, left picks too. Voxels protected from the assistant are tinted violet.
 While the Noise dock is in sight its box is outlined (dashed when the layer is
 outside it); with its "Drag box" on, a left drag sets the box's two axes in this
@@ -17,16 +19,22 @@ slice instead of drawing (Alt + left still picks).
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from core.brushes import layer_region, mirror_sum, mirrored, placed
-from qtui.brush import DRAGGED, SCULPT, brush_edit, fill_region, held_mode, size_step
+from qtui import keymap
+from qtui.brush import DRAGGED, SCULPT, Stroke, brush_edit, fill_region, held_mode, size_step
 from qtui.document import PROTECT_MODES
 from qtui.edit_view import AXIS_RGB, PROTECTED_RGB, PROTECTED_TINT
 
 BACKGROUND = np.array([38, 38, 42], dtype=np.float32)
 GHOST = 0.33  # how strongly the voxels behind the layer show through
+ZOOM_STEP = 1.25  # one wheel step of Ctrl + wheel
+MAX_CELL = 64.0  # the closest zoom, pixels per voxel
+EDGE_PAN = 12  # pixels a stroke held past the canvas's edge pans by, every 30 ms
 
 # name: (u axis, v axis, depth axis, flip u, flip v, the direction "behind" goes along the depth axis)
 SLICES = {
@@ -53,14 +61,55 @@ class SliceCanvas(QtWidgets.QWidget):
         self.last = None
         self.region = None  # the Noise dock's box (noise_panel.NoiseBox), outlined while it shows
         self.region_start = None  # the cell a drag setting it began at
+        self.zoom = None  # pixels per cell; None: the layer fits the canvas
+        self.pan = QtCore.QPointF(0, 0)  # how far the layer is moved from the centre
+        self.pan_from = None  # (mouse position, pan) while a pan drag goes on
+        self.cursor = None  # where a stroke held past the edge is, for the edge pan
+        self._edge = QtCore.QTimer(self, interval=30, timeout=self._edge_pan)
 
-    # --- geometry: cells fit the widget, centred ----------------------------------------
+    # --- geometry: cells fit the widget, centred, unless zoomed and panned ---------------
+    def fit_cell(self) -> float:
+        """Pixels per cell for the whole layer to fit: whole pixels, below one only if it must."""
+        U, V = self.view.extent
+        fit = min(self.width() / max(U, 1), self.height() / max(V, 1))
+        return float(int(fit)) if fit >= 1 else fit
+
     def _layout(self):
         U, V = self.view.extent
-        cell = max(1, min(self.width() // max(U, 1), self.height() // max(V, 1)))
-        ox = (self.width() - cell * U) // 2
-        oy = (self.height() - cell * V) // 2
+        cell = self.zoom or self.fit_cell()
+        ox = round((self.width() - cell * U) / 2 + self.pan.x())
+        oy = round((self.height() - cell * V) / 2 + self.pan.y())
         return cell, ox, oy
+
+    def fit(self) -> None:
+        """The whole layer in the canvas again."""
+        self.zoom, self.pan = None, QtCore.QPointF(0, 0)
+        self.update()
+
+    def zoom_at(self, pos: QtCore.QPointF, steps: float) -> None:
+        """Zoom in (steps > 0) or out around a point, the cell under it staying put; out past the fit fits."""
+        U, V = self.view.extent
+        cell, ox, oy = self._layout()
+        new = cell * ZOOM_STEP ** steps
+        if new >= 1:  # whole pixels per cell, so every cell is as wide as the next
+            new = float(round(new))
+            if new == cell:
+                new += 1 if steps > 0 else -1
+        new = min(MAX_CELL, new)
+        if new <= self.fit_cell():
+            self.fit()
+            return
+        def kept(p, o):
+            """Where the point is, in cells, at least half a pixel inside its cell: _layout rounds the corner to
+            whole pixels, which must not move the point into the next cell."""
+            at = (p - o) / cell
+            margin = min(0.5, 0.5 / new)
+            return math.floor(at) + min(max(at - math.floor(at), margin), 1 - margin)
+        at = QtCore.QPointF(kept(pos.x(), ox), kept(pos.y(), oy))
+        self.zoom = new
+        self.pan = QtCore.QPointF(pos.x() - at.x() * new - (self.width() - new * U) / 2,
+                                  pos.y() - at.y() * new - (self.height() - new * V) / 2)
+        self.update()
 
     def cell_at(self, pos: QtCore.QPointF):
         U, V = self.view.extent
@@ -73,19 +122,19 @@ class SliceCanvas(QtWidgets.QWidget):
         v = V - 1 - row if self.view.flip_v else row
         return u, v
 
-    def _screen_rect(self, u: int, v: int) -> QtCore.QRect:
+    def _screen_rect(self, u: int, v: int) -> QtCore.QRectF:
         U, V = self.view.extent
         cell, ox, oy = self._layout()
         col = U - 1 - u if self.view.flip_u else u
         row = V - 1 - v if self.view.flip_v else v
-        return QtCore.QRect(ox + col * cell, oy + row * cell, cell, cell)
+        return QtCore.QRectF(ox + col * cell, oy + row * cell, cell, cell)
 
     def _paint_region(self, painter):
         """The Noise dock's box across this slice: solid with a faint fill where the layer is inside it, dashed
         where it lies in front of or behind the layer."""
         lo, hi = self.region.bounds()
         view = self.view
-        rect = self._screen_rect(lo[view.u], lo[view.v]).united(self._screen_rect(hi[view.u], hi[view.v]))
+        rect = self._screen_rect(lo[view.u], lo[view.v]).united(self._screen_rect(hi[view.u], hi[view.v])).toRect()
         inside = lo[view.d] <= view.depth_box.value() <= hi[view.d]
         colour = QtGui.QColor(*self.region.COLOUR)
         pen = QtGui.QPen(colour, 2, QtCore.Qt.PenStyle.SolidLine if inside else QtCore.Qt.PenStyle.DashLine)
@@ -112,10 +161,10 @@ class SliceCanvas(QtWidgets.QWidget):
             painter.setPen(QtGui.QPen(QtGui.QColor.fromRgbF(*AXIS_RGB[axis]), 2, QtCore.Qt.PenStyle.DashLine))
             if along_u:
                 x = ox + round((U - at if view.flip_u else at) * cell)
-                painter.drawLine(x, oy, x, oy + V * cell)
+                painter.drawLine(QtCore.QLineF(x, oy, x, oy + V * cell))
             else:
                 y = oy + round((V - at if view.flip_v else at) * cell)
-                painter.drawLine(ox, y, ox + U * cell, y)
+                painter.drawLine(QtCore.QLineF(ox, y, ox + U * cell, y))
 
     # --- drawing ----------------------------------------------------------------------
     def paintEvent(self, event):
@@ -125,15 +174,17 @@ class SliceCanvas(QtWidgets.QWidget):
             return
         U, V = self.view.extent
         cell, ox, oy = self._layout()
-        target = QtCore.QRect(ox, oy, cell * U, cell * V)
+        target = QtCore.QRectF(ox, oy, cell * U, cell * V)
         painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, False)
         painter.drawImage(target, self.image)
-        if cell >= 6:
+        if cell >= 6:  # the grid, only its lines in sight
             painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 60), 1))
-            for i in range(U + 1):
-                painter.drawLine(ox + i * cell, oy, ox + i * cell, oy + V * cell)
-            for j in range(V + 1):
-                painter.drawLine(ox, oy + j * cell, ox + U * cell, oy + j * cell)
+            top, bottom = max(oy, 0), min(oy + V * cell, self.height())
+            left, right = max(ox, 0), min(ox + U * cell, self.width())
+            for i in range(max(0, int(-ox // cell)), min(U, int((self.width() - ox) // cell)) + 1):
+                painter.drawLine(QtCore.QLineF(ox + i * cell, top, ox + i * cell, bottom))
+            for j in range(max(0, int(-oy // cell)), min(V, int((self.height() - oy) // cell)) + 1):
+                painter.drawLine(QtCore.QLineF(left, oy + j * cell, right, oy + j * cell))
         if self.region is not None and self.region.shown:
             self._paint_region(painter)
         self._paint_mirrors(painter)
@@ -160,11 +211,21 @@ class SliceCanvas(QtWidgets.QWidget):
                 painter.drawRect(rect)
 
     # --- mouse ------------------------------------------------------------------------
+    def _pans(self, event) -> bool:
+        Button = QtCore.Qt.MouseButton
+        return event.button() == Button.MiddleButton or (
+            event.button() == Button.RightButton and event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+
     def mousePressEvent(self, event):
-        hit = self.cell_at(event.position())
-        if hit is None:
+        if self._pans(event) and self.stroke_button is None:
+            if self.zoom is None:
+                self.zoom = self.fit_cell()  # panning a fitted layer keeps its size
+            self.pan_from = (event.position(), QtCore.QPointF(self.pan))
             return
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        hit = self.cell_at(event.position())
+        if hit is None:
             return
         if self.region is not None and self.region.drags and \
                 not event.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier:
@@ -179,15 +240,60 @@ class SliceCanvas(QtWidgets.QWidget):
         self.stroke_mode = mode
         self.stroke_shift = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         self.last = hit
-        self.view.doc.begin_stroke()
+        self.view.begin_stroke()
         if self.view.brush is not None and self.view.brush.kind in DRAGGED:
             self.box_start = hit  # the box is written on release
             self.update()
             return
         self.view.draw([hit], mode, self.stroke_shift)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.MiddleButton:
+            self.fit()
+            return
+        self.mousePressEvent(event)
+
+    def _stroking(self) -> bool:
+        return self.stroke_button is not None or self.region_start is not None
+
+    def _clamped(self, pos: QtCore.QPointF) -> QtCore.QPointF:
+        return QtCore.QPointF(min(max(pos.x(), 0), self.width() - 1), min(max(pos.y(), 0), self.height() - 1))
+
     def mouseMoveEvent(self, event):
-        hit = self.cell_at(event.position())
+        pos = event.position()
+        if self.pan_from is not None:
+            start, pan = self.pan_from
+            self.pan = pan + (pos - start)
+            self.update()
+            return
+        if self._stroking():  # a stroke stops at the canvas's edge, and pans along while held past it
+            inside = self._clamped(pos)
+            if inside != pos:
+                self.cursor = pos
+                if not self._edge.isActive():
+                    self._edge.start()
+            else:
+                self._edge.stop()
+            pos = inside
+        self._move_to(pos)
+
+    def _edge_pan(self):
+        """A stroke held past the edge: pan towards it while there is more layer that way, and go on drawing."""
+        if not self._stroking() or self.cursor is None:
+            self._edge.stop()
+            return
+        U, V = self.view.extent
+        cell, ox, oy = self._layout()
+        x, y, w, h = self.cursor.x(), self.cursor.y(), self.width(), self.height()
+        dx = EDGE_PAN if x < 0 and ox < 0 else -EDGE_PAN if x >= w and ox + cell * U > w else 0
+        dy = EDGE_PAN if y < 0 and oy < 0 else -EDGE_PAN if y >= h and oy + cell * V > h else 0
+        if dx or dy:
+            self.pan += QtCore.QPointF(dx, dy)
+            self.update()
+        self._move_to(self._clamped(self.cursor))
+
+    def _move_to(self, pos: QtCore.QPointF):
+        hit = self.cell_at(pos)
         if hit != self.hover:
             self.hover = hit
             self.view.report_hover(hit)
@@ -202,12 +308,16 @@ class SliceCanvas(QtWidgets.QWidget):
             return
         if self.stroke_button is not None and hit is not None and hit != self.last:
             steps = max(abs(hit[0] - self.last[0]), abs(hit[1] - self.last[1]))
-            line = {(round(self.last[0] + (hit[0] - self.last[0]) * t / steps),
-                     round(self.last[1] + (hit[1] - self.last[1]) * t / steps)) for t in range(1, steps + 1)}
-            self.view.draw(sorted(line), self.stroke_mode, self.stroke_shift)
+            line = [(round(self.last[0] + (hit[0] - self.last[0]) * t / steps),
+                     round(self.last[1] + (hit[1] - self.last[1]) * t / steps)) for t in range(1, steps + 1)]
+            self.view.draw(list(dict.fromkeys(line)), self.stroke_mode, self.stroke_shift)  # in order, for smear
             self.last = hit
 
     def mouseReleaseEvent(self, event):
+        if self.pan_from is not None and self._pans(event):
+            self.pan_from = None
+            return
+        self._edge.stop()
         if self.region_start is not None and event.button() == QtCore.Qt.MouseButton.LeftButton:
             self.region_start = None
             return
@@ -217,10 +327,14 @@ class SliceCanvas(QtWidgets.QWidget):
                 self.view.draw_box(self.box_start, self.last, self.stroke_mode, self.stroke_shift)
                 self.box_start = None
                 self.update()
-            self.view.doc.end_stroke()
+            self.view.end_stroke()
+
+    def enterEvent(self, event):
+        keymap.take_focus(self)  # the slice's keys work without a click first
 
     def leaveEvent(self, event):
         self.hover = None
+        self.view.report_hover(None)  # the status bar forgets the cell too
         self.update()
 
     def wheelEvent(self, event):
@@ -228,8 +342,22 @@ class SliceCanvas(QtWidgets.QWidget):
             self.view.brush.set(size=self.view.brush.size + size_step(event))
             self.update()
             return
+        if event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            self.zoom_at(event.position(), event.angleDelta().y() / 120)
+            return
         step = 1 if event.angleDelta().y() > 0 else -1
         self.view.depth_box.setValue(self.view.depth_box.value() + step)
+
+    def event(self, event):
+        if event.type() == QtCore.QEvent.Type.NativeGesture and \
+                event.gestureType() == QtCore.Qt.NativeGestureType.ZoomNativeGesture:  # a trackpad's pinch
+            self.zoom_at(event.position(), event.value() / math.log(ZOOM_STEP))
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event):
+        if not self.view.key(event):
+            super().keyPressEvent(event)
 
 
 class SliceView(QtWidgets.QWidget):
@@ -240,6 +368,7 @@ class SliceView(QtWidgets.QWidget):
         self.u, self.v, self.d, self.flip_u, self.flip_v, self.behind = SLICES[name]
         self.extent = (1, 1)
         self.brush = None  # the Brush dock's brush (the window gives it); None: single cells
+        self.stroke = None  # the brush.Stroke drawn now (what a smear carries)
         self._bits = None  # _solid_bits': (model, colour plane, model version, bits)
 
         self.depth_box = QtWidgets.QSpinBox()
@@ -301,6 +430,8 @@ class SliceView(QtWidgets.QWidget):
             widget.setRange(0, size[self.d] - 1)
             widget.setValue(depth)
             widget.blockSignals(False)
+        if not keep_depth:  # another model: seen whole
+            self.canvas.fit()
         self.refresh()
 
     def refresh_soon(self):
@@ -358,9 +489,30 @@ class SliceView(QtWidgets.QWidget):
         n[self.d] = -self.behind
         return n
 
+    def begin_stroke(self):
+        self.stroke = Stroke()
+        self.doc.begin_stroke()
+
+    def end_stroke(self):
+        self.stroke = None
+        self.doc.end_stroke()
+
+    def key(self, event) -> bool:
+        """A slice's own key (keymap): the layer up or down, the zoom back to the fit. False for others."""
+        action = keymap.action_for(event, keymap.SLICES)
+        if action in ("layer_up", "layer_down"):
+            self.depth_box.setValue(self.depth_box.value() + (1 if action == "layer_up" else -1))
+        elif action == "slice_fit":
+            self.canvas.fit()
+        else:
+            return False
+        return True
+
     def draw(self, cells, mode: str, shift: bool = False):
         """The brush at cells of this layer in a mode: attach fills empty voxels, paint recolours solid ones,
-        erase removes; a sculpting brush reshapes around the cell."""
+        erase removes; a sculpting brush reshapes around the cell. Brushes that only write the current colour
+        are worked out for every cell and written once; the sculpting ones, which read what the cell before
+        wrote, one cell at a time."""
         if self.brush is None:
             points = [self._point(u, v) for u, v in cells]
             points = [p for p in points if bool(self.doc.voxel(*p)) == (mode != "attach")]
@@ -369,12 +521,22 @@ class SliceView(QtWidgets.QWidget):
             elif points:
                 self.doc.set_voxels(points, colour=0 if mode == "erase" else None)
             return
+        one_by_one = self.brush.kind in SCULPT and mode not in PROTECT_MODES
+        found = []
         for u, v in cells:
             p = self._point(u, v)
             voxels = brush_edit(self.doc, self.brush, mode, p, self._normal(), hit=p if self.doc.voxel(*p) else None,
-                                in_slice=True, shift=shift)
-            if voxels is not None:
+                                in_slice=True, shift=shift, stroke=self.stroke)
+            if voxels is None:
+                continue
+            if one_by_one:
                 self.doc.apply_brush(voxels, mode)
+            else:
+                found.append(voxels)
+        if found:
+            points = np.concatenate([f[0] for f in found])
+            _, first = np.unique(points, axis=0, return_index=True)  # each voxel once
+            self.doc.apply_brush(tuple(np.concatenate([f[i] for f in found])[first] for i in range(3)), mode)
 
     def draw_box(self, start, end, mode: str, shift: bool = False):
         """A box or ellipsoid brush dragged from cell `start` to cell `end` in this layer."""

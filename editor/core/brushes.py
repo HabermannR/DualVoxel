@@ -301,6 +301,69 @@ def sculpt(colour_zyx: np.ndarray, material_zyx: np.ndarray, region, op: str):
     return (pts[keep], colours[keep], materials[keep]) if keep.any() else None
 
 
+# --- smear: drag what is under the brush along a stroke --------------------------------------------------
+def mirror_images(anchor, size, axes, planes=None) -> list[tuple[np.ndarray, np.ndarray]]:
+    """(anchor, flip) for the anchor and each of its mirror images (flip: -1 on the axes it is mirrored on, to
+    turn the brush's offsets with it), each place once."""
+    images = [(np.asarray(anchor, dtype=int), np.ones(3, dtype=int))]
+    for a, on in enumerate(axes):
+        if on:
+            for at, flip in list(images):
+                at, flip = at.copy(), flip.copy()
+                at[a], flip[a] = mirror_sum(size, planes, a) - at[a], -flip[a]
+                images.append((at, flip))
+    seen, out = set(), []
+    for at, flip in images:
+        if tuple(at) not in seen:
+            seen.add(tuple(at))
+            out.append((at, flip))
+    return out
+
+
+def smear(colour_zyx: np.ndarray, material_zyx: np.ndarray, labs, points, carried, strength: float):
+    """One step of a smear at `points` ((n, 3) x, y, z, the brush's cells in a fixed order through the stroke)
+    with what it carries from the step before: (solidness 0..1, Lab colour, material) per cell, None at the
+    stroke's first step. Each cell becomes `strength` of what is carried and the rest of what is there:
+    solid where that is at least half solid, in the solid parts' colours mixed in Lab (the nearest table colour,
+    labs by slot - 1) and the material of the larger part. What it leaves is carried on, so a stroke drags
+    voxels and colours along, fading (strength 1: the shape unchanged). Cells outside the model are not
+    written and carry on what they carried.
+    Returns ((points, colours, materials) of the voxels that change, or None; what is carried now)."""
+    sz, sy, sx = colour_zyx.shape
+    pts = np.asarray(points, dtype=int).reshape(-1, 3)
+    n = len(pts)
+    inside = (pts >= 0).all(axis=1) & (pts[:, 0] < sx) & (pts[:, 1] < sy) & (pts[:, 2] < sz)
+    x, y, z = pts[inside].T
+    colour = np.zeros(n, dtype=np.uint8)
+    material = np.zeros(n, dtype=np.uint8)
+    colour[inside], material[inside] = colour_zyx[z, y, x], material_zyx[z, y, x]
+    labs = np.asarray(labs, dtype=np.float64)
+    here = (colour > 0).astype(np.float64)
+    here_lab = np.where(here[:, None] > 0, labs[np.maximum(colour, 1).astype(int) - 1], 0.0)
+    if carried is None or len(carried[0]) != n:
+        return None, (here, here_lab, material)
+    c_solid, c_lab, c_material = carried
+    s = float(min(1.0, max(0.0, strength)))
+    w_carried, w_here = s * c_solid, (1 - s) * here
+    solid = w_carried + w_here
+    total = np.maximum(solid, 1e-9)[:, None]
+    lab = (w_carried[:, None] * c_lab + w_here[:, None] * here_lab) / total
+    new_material = np.where(w_carried >= w_here, c_material, material).astype(np.uint8)
+    keep_on = ~inside  # outside the model: carried as it was
+    solid = np.where(keep_on, c_solid, solid)
+    lab = np.where(keep_on[:, None], c_lab, lab)
+    new_material = np.where(keep_on, c_material, new_material).astype(np.uint8)
+    now_solid = (solid >= 0.5) & inside
+    new_colour = np.zeros(n, dtype=np.uint8)
+    if now_solid.any():
+        from scipy.spatial import cKDTree
+        new_colour[now_solid] = cKDTree(labs).query(lab[now_solid])[1] + 1
+    new_material[~now_solid & inside] = 0
+    change = inside & ((new_colour != colour) | (now_solid & (new_material != material)))
+    out = (pts[change], new_colour[change], new_material[change]) if change.any() else None
+    return out, (solid, lab, new_material)
+
+
 def layer_region(colour_zyx: np.ndarray, point, axis: int) -> np.ndarray:
     """The cells connected (edge to edge) to `point` in its layer across `axis` that have its colour (or are
     empty like it): a slice's flood fill. (x, y, z) points."""

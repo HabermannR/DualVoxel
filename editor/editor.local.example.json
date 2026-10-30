@@ -1,7 +1,26 @@
 {
   "renderer_path": "renderer",
-  "environments": ["environments", "C:/path/to/more/hdr"],
+  "environments": [
+    "environments",
+    "C:/path/to/more/hdr"
+  ],
   "send_tables": [
-    {"name": "MyGame", "path": "C:/path/to/MyGame"}
-  ]
+    {
+      "name": "MyGame",
+      "path": "C:/path/to/MyGame"
+    }
+  ],
+  "keys": {
+    "size_down": [
+      "-",
+      "Num+-"
+    ],
+    "size_up": [
+      "+",
+      "Num++"
+    ],
+    "redo": [
+      "Ctrl+Shift+Z"
+    ]
+  }
 }

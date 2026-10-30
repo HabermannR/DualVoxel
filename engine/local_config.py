@@ -13,7 +13,8 @@ editor\environments.
 send_tables: projects that keep
 their own copies of the colour and material tables in <path>\assets\palette; the editor's File
 menu offers "Send tables to <name>…" for each. Relative paths are relative to the editor folder.
-Without the file there is nothing to send to.
+Without the file there is nothing to send to. keys: one's own keys for the editor's actions
+(editor/qtui/keymap.py), written by its Edit > Keys… dialog.
 """
 from __future__ import annotations
 
@@ -32,6 +33,16 @@ def load() -> dict:
         return json.loads(CONFIG.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise ValueError(f"{CONFIG} is not valid JSON: {error}") from error
+
+
+def update(name: str, value) -> None:
+    """Set one setting in the file (None: take it out), the others kept as they are."""
+    settings = load()
+    if value is None:
+        settings.pop(name, None)
+    else:
+        settings[name] = value
+    CONFIG.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
 
 def _path(value: str) -> Path:

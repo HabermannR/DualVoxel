@@ -16,7 +16,10 @@ from qtui.document import Document
 from qtui.edit_view import EditView
 from qtui.material_editor import MaterialEditor
 from qtui.material_panel import MaterialPanel
-from qtui.palette_panel import TOOL_KEYS, PalettePanel
+from qtui import keymap
+from qtui.brush import KINDS
+from qtui.document import TOOLS
+from qtui.palette_panel import PalettePanel
 from qtui.brush_panel import install_brush_panel
 from qtui.export_panel import install_export_panel
 from qtui.light_panel import install_light_panel
@@ -179,40 +182,76 @@ class EditorWindow(QtWidgets.QMainWindow):
         return self.dock_manager.addDockWidget(area, dock, target)
 
     # --- menus ------------------------------------------------------------------------
-    def _action(self, menu, text, slot, shortcut=None):
+    def _action(self, menu, text, slot, key=None):
+        """A menu entry; key: its action in qtui.keymap, whose keys it takes (anywhere in the window)."""
         action = QtGui.QAction(text, self)
-        if shortcut:
-            action.setShortcut(QtGui.QKeySequence(shortcut))
+        if key:
+            self.key_actions[key] = action
             action.setShortcutContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
+            action.setShortcuts(keymap.sequences(key))
         action.triggered.connect(slot)
         menu.addAction(action)
         return action
 
+    def apply_keys(self):
+        """The keys as keymap has them now (after Edit > Keys…), on every menu entry."""
+        for key, action in self.key_actions.items():
+            action.setShortcuts(keymap.sequences(key))
+        self.brush_panel.refresh_tips()
+
+    def toggle_behind(self):
+        """Every slice's Behind box the other way from the Front slice's."""
+        on = not self.slices["Front"].ghost_box.isChecked()
+        for view in self.slices.values():
+            view.ghost_box.setChecked(on)
+
+    def keys_dialog(self):
+        if keymap.KeysDialog(self).exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.apply_keys()
+
     def _menus(self):
+        self.key_actions = {}
         bar = self.menuBar()
         file = bar.addMenu("&File")
-        self._action(file, "New…", self.new_dialog, "Ctrl+N")
-        self._action(file, "Open…", self.open_dialog, "Ctrl+O")
+        self._action(file, "New…", self.new_dialog, "new")
+        self._action(file, "Open…", self.open_dialog, "open")
         self.recent_menu = file.addMenu("Open recent")
         self.recent_menu.aboutToShow.connect(self.rebuild_recent_menu)
-        self._action(file, "Save", self.save, "Ctrl+S")
-        self._action(file, "Save as…", self.save_as, "Ctrl+Shift+S")
+        self._action(file, "Save", self.save, "save")
+        self._action(file, "Save as…", self.save_as, "save_as")
         file.addSeparator()
-        self._action(file, "Render picture…", self.render_picture_dialog, "Ctrl+Shift+R")
-        self._action(file, "Render video…", self.render_video, "Ctrl+Shift+V")
+        self._action(file, "Render picture…", self.render_picture_dialog, "render_picture")
+        self._action(file, "Render video…", self.render_video, "render_video")
         file.addSeparator()
         targets = send_targets()
         for name, path in targets:
             self._action(file, f"Send tables to {name}…", lambda _=False, n=name, p=path: self.send_tables(n, p))
         if targets:
             file.addSeparator()
-        self._action(file, "Quit", self.close, "Ctrl+Q")
+        self._action(file, "Quit", self.close, "quit")
         edit = bar.addMenu("&Edit")
-        self._action(edit, "Undo", self.doc.undo, "Ctrl+Z")
-        self._action(edit, "Redo", self.doc.redo, "Ctrl+Y")
+        self._action(edit, "Undo", self.doc.undo, "undo")
+        self._action(edit, "Redo", self.doc.redo, "redo")
+        edit.addSeparator()
+        self._action(edit, "Keys…", self.keys_dialog, "keys")
+        edit.addSeparator()
         tools = bar.addMenu("&Tools")
-        for tool, key in TOOL_KEYS.items():
-            self._action(tools, tool.capitalize(), lambda _=False, t=tool: self.doc.set_tool(t), key)
+        for tool in TOOLS:
+            self._action(tools, tool.capitalize(), lambda _=False, t=tool: self.brush_panel.set_mode(t), f"tool_{tool}")
+        tools.addSeparator()
+        brush = tools.addMenu("Brush")
+        for kind in KINDS:
+            self._action(brush, kind.capitalize(), lambda _=False, k=kind: self.brush_panel.set_kind(k),
+                         f"brush_{kind}")
+        brush.addSeparator()
+        b = self.edit_view.brush
+        self._action(brush, "Size down", lambda: b.set(size=b.size - 1), "size_down")
+        self._action(brush, "Size up", lambda: b.set(size=b.size + 1), "size_up")
+        self._action(brush, "Square or circle", lambda: b.set(round=not b.round), "round")
+        self._action(brush, "2D or 3D", lambda: b.set(volume=not b.volume), "volume")
+        for a, axis in enumerate("xyz"):
+            self._action(brush, f"Mirror {axis}", lambda _=False, a=a: b.set(
+                mirror=[on != (i == a) for i, on in enumerate(b.mirror)]), f"mirror_{axis}")
         tools.addSeparator()
         self._action(tools, "Clear protection", self.doc.clear_protected)
         self.link_action = self._action(tools, "Assistant link", self.set_assistant_link)
@@ -223,7 +262,8 @@ class EditorWindow(QtWidgets.QMainWindow):
             view.addAction(dock.toggleViewAction())
         view.addSeparator()
         self._action(view, "Pause / resume render", lambda: self.render_view.set_paused(not self.render_view.paused),
-                     "F9")
+                     "pause_render")
+        self._action(view, "Behind in the slices", self.toggle_behind, "behind")
         self._action(view, "Reset layout", lambda: self.dock_manager.restoreState(self.default_layout, LAYOUT_VERSION))
 
     # --- files ------------------------------------------------------------------------

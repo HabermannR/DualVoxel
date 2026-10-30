@@ -100,7 +100,7 @@ class SceneDocks(QtCore.QObject):
         w.menuBar().insertMenu(_menu(w, "&View").menuAction(), menu)
         w._action(menu, "New project", self.project_doc.new_project)
         w._action(menu, "Open project…", self.open_project_dialog)
-        w._action(menu, "Save project", self.save_project, "Ctrl+Alt+S")
+        w._action(menu, "Save project", self.save_project, "save_project")
         w._action(menu, "Save project as…", self.save_project_as)
         menu.addSeparator()
         w._action(menu, "Add model…", self.outliner.add_model_dialog)

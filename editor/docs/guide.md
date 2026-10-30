@@ -77,7 +77,7 @@ Every part of the window is a dock. Drag a dock by its tab to move it beside ano
 
 The status bar names the model, its size and voxel count, and what the mouse is over, for example `3D attach (voxel): (6, 2, 1) · 66 voxels`: the mode, the brush, the voxel, and how many voxels a click would change.
 
-**Undo** with `Ctrl+Z`, redo with `Ctrl+Y`. Every click or drag is one step, however many voxels it changed. While the Project dock, the Scene view or the Transform dock has the focus, undo works on the scene instead of the model.
+**Undo** with `Ctrl+Z`, redo with `Ctrl+Y` or `Ctrl+Shift+Z`. Every click or drag is one step, however many voxels it changed. While the Project dock, the Scene view or the Transform dock has the focus, undo works on the scene instead of the model.
 
 ### Cutting the model open
 
@@ -122,7 +122,7 @@ You never have to remember this: the Brush dock shows the current mapping under 
 
 ### Brushes
 
-- **Voxel**: a square or circle (**2D**, flat against the clicked face) or a cube or sphere (**3D**), 1 to 32 voxels. `[` and `]` change the size in the 3D view, and so does the mouse wheel with `Alt` + `Shift` held, there and in the slices.
+- **Voxel**: a square or circle (**2D**, flat against the clicked face) or a cube or sphere (**3D**), 1 to 32 voxels. `[` and `]`, or `-` and `+`, change the size anywhere, and so does the mouse wheel with `Alt` + `Shift` held in the 3D view and the slices. Each brush has a key of its own too ([Keys](#8-keys)).
 - **Face**: the clicked face's whole connected flat area. Attach builds a new layer on it; paint and erase take all of it.
 - **Box**: drag a rectangle in the clicked layer.
 - **Ellipsoid**: drag a rectangle on a face and get the ellipsoid over it. **Height** sets how many layers it stands (auto: the rectangle's shorter side, so a square gives a sphere). Attach rests it on the face; paint and erase sink it into the surface. In a slice it is centred on the layer.
@@ -141,10 +141,11 @@ The **Sculpt** row reshapes what is already there, inside the brush's size and s
 - **Smooth** rounds off: fills small hollows, takes off small bumps.
 - **Erode** takes the outer skin of voxels off.
 - **Grow** adds a skin of voxels in the colours of their neighbours.
+- **Smear** picks up what is under the brush when you press, solid voxels and empty cells alike, and drags it along the stroke, mixing it with what is there. Drag out of a surface and you pull material out with you, like clay; drag into it and you push a dent in. Colours mix too: where two meet you get the table colour between them. **Strength** says how much of what it carries it lays down at each step. At 85 % a bump trails off after four or five voxels; at 100 % the shape is dragged along unchanged. It works best in the slices, where you can drag anywhere in the layer. In the 3D view the brush follows the surface under the mouse. Each mirror image carries its own.
 
 Shift swaps Erode and Grow. Dragging over the same place several times digs (or builds) deeper; for a light touch, click once.
 
-A sculpt brush does the same whatever the mode, so while one is chosen no mode shows as chosen, and its preview in the 3D view shows what it does: green where Grow adds, red where Erode takes off, white for Smooth. Choosing a mode (its button or key) goes back to the brush you used before.
+A sculpt brush does the same whatever the mode, so while one is chosen no mode shows as chosen, and its preview in the 3D view shows what it does: green where Grow adds, red where Erode takes off, white for Smooth, orange for the voxels Smear covers. Choosing a mode (its button or key) goes back to the brush you used before.
 
 <img src="figures/current_brush_sculpt.png" width="468" alt="Smooth chosen in the Sculpt row">
 
@@ -158,11 +159,13 @@ The **Plane** row below sets where each axis mirrors. *centre* is the model's ce
 
 The Front, Side and Top docks show one layer of the model each. Draw in them with the same mouse rules and the same brush as in the 3D view (except Stamp, which works only in 3D). The shaded cells under the mouse are exactly what a click changes.
 
-Move the layer with the slider, the arrow buttons, the number box or the wheel. **Behind** shows the nearest voxels behind the layer, dimmed, so you can draw on top of what is there.
+Move the layer with the slider, the arrow buttons, the number box, the wheel, or `Page Up` and `Page Down` (`.` and `,` too). **Behind** shows the nearest voxels behind the layer, dimmed, so you can draw on top of what is there (`Ctrl+B` turns it on or off in all three).
+
+The layer fits the slice when it opens, however big the model is. **Zoom** with `Ctrl` + wheel: the cell under the mouse stays where it is. **Pan** with a middle drag or `Shift` + right drag. `Home` or a middle double click fits the whole layer in again. A stroke that runs past the slice's edge stops at the edge and pans along while you hold it there. The grid lines show from 6 pixels a voxel.
 
 <img src="figures/current_slice_top.png" width="318" alt="The Top slice">
 
-*The Top slice through the alchemist's legs. The shaded circle is a size-5 circle brush.*
+*The Top slice through the alchemist's boots, zoomed in, the foot of his staff below them. The shaded circle is a size-5 circle brush.*
 
 ### The model's box
 
@@ -514,24 +517,93 @@ A session goes like this:
 
 ## 8. Keys
 
-The 3D-view keys work while the 3D edit view has the focus.
+**Edit > Keys…** (`Ctrl+K`) lists every key and lets you change it: click a box and press the new key; each action can have two. Your keys are saved in `editor.local.json`, next to the editor; only the ones you changed. A key that two actions would share is shown in red, and OK stays off until you change one of them.
+
+The keys under *Anywhere* work whatever has the focus, except while you type in a text or number box. The others work in their own view. A view takes the focus when the mouse comes over it, so you can draw in a slice and press `1` over the 3D view right away. The tables show the default keys.
+
+<!-- keys: made by docs/keys_table.py from qtui/keymap.py -->
+**Anywhere**
 
 | Key | Does |
 |---|---|
-| `Ctrl+N`, `Ctrl+O` | New model, open |
-| `Ctrl+S`, `Ctrl+Shift+S` | Save, save as |
-| `Ctrl+Shift+R` | Render a picture |
-| `Ctrl+Z`, `Ctrl+Y` | Undo, redo |
-| `A`, `B`, `E`, `P`, `L` | Attach, paint, erase, pick, protect |
-| `[`, `]` | Brush size down, up |
-| `Alt` + `Shift` + wheel | Brush size (3D view and slices) |
-| `5` | In the 3D view: orthographic on or off |
-| `1`, `3`, `7` (`Ctrl`: the other side) | In the 3D view: look from the front, right, top (back, left, bottom) |
-| `0`, `Ctrl+0` | In the 3D view: isometric 2:1 (pixel art), true isometric |
-| `R`, `Shift+R` | Turn the stamp, or the selected instance |
-| `Esc` | Stop stamping |
-| `F9` | Pause or resume the render |
+| `Ctrl+N` | New model |
+| `Ctrl+O` | Open |
+| `Ctrl+S` | Save |
+| `Ctrl+Shift+S` | Save as |
 | `Ctrl+Alt+S` | Save the project |
-| Arrows, `Page Up`/`Page Down` | In the 3D view: shift the model in its box. In the Scene view: move the selected instance. Shift: 8 voxels |
-| `M`, `Ctrl+D`, `Del` | Mirror, duplicate, delete the selected instance |
+| `Ctrl+Shift+R` | Render a picture |
+| `Ctrl+Shift+V` | Render a video |
 | `Ctrl+Q` | Quit |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y`, `Ctrl+Shift+Z` | Redo |
+| `Ctrl+K` | Keys… |
+| `F9` | Pause or resume the render |
+| `A` | Attach |
+| `B` | Paint |
+| `E` | Erase |
+| `P` | Pick |
+| `L` | Protect |
+| `V` | Voxel brush |
+| `F` | Face brush |
+| `X` | Box brush |
+| `O` | Ellipsoid brush |
+| `I` | Line brush |
+| `G` | Fill brush |
+| `T` | Stamp brush |
+| `U` | Smear brush |
+| `N` | Smooth |
+| `K` | Erode |
+| `J` | Grow |
+| `[`, `-` | Brush size down |
+| `]`, `+` | Brush size up |
+| `C` | Square or circle brush |
+| `D` | Flat (2D) or volume (3D) brush |
+| `Alt+X` | Mirror x on or off |
+| `Alt+Y` | Mirror y on or off |
+| `Alt+Z` | Mirror z on or off |
+| `Ctrl+B` | Behind in the slices on or off |
+
+**3D edit view**
+
+| Key | Does |
+|---|---|
+| `5` | Orthographic on or off |
+| `1` | Look from the front |
+| `Ctrl+1` | Look from the back |
+| `3` | Look from the right |
+| `Ctrl+3` | Look from the left |
+| `7` | Look from the top |
+| `Ctrl+7` | Look from the bottom |
+| `0` | Isometric 2:1 (pixel art) |
+| `Ctrl+0` | True isometric |
+| `R` | Turn the stamp |
+| `Shift+R` | Turn the stamp back |
+| `Esc` | Stop stamping |
+| Arrows, `Page Up`/`Page Down` | Shift the model in its box (Shift: 8 voxels) |
+| `Alt` + `Shift` + wheel | Brush size |
+
+**Slices**
+
+| Key | Does |
+|---|---|
+| `Page Up`, `.` | One layer up |
+| `Page Down`, `,` | One layer down |
+| `Home` | Fit the layer in the slice (after zooming) |
+| Wheel | Move the layer |
+| `Alt` + `Shift` + wheel | Brush size |
+| `Ctrl` + wheel | Zoom in or out around the mouse |
+| Middle drag, `Shift` + right drag | Pan |
+| Middle double click | Fit the layer in the slice |
+
+**Scene view**
+
+| Key | Does |
+|---|---|
+| `R` | Turn the selected instance |
+| `Shift+R` | Turn the selected instance back |
+| `M` | Mirror the selected instance |
+| `Ctrl+D` | Duplicate the selected instance |
+| `Del`, `Backspace` | Delete the selected instance |
+| `Return`, `Enter` | Edit the selected instance's model |
+| Arrows, `Page Up`/`Page Down` | Move the selected instance (Shift: 8 voxels) |
+<!-- /keys -->

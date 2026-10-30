@@ -6,7 +6,7 @@ Two bytes per voxel: a colour and a material. DualVoxel is a voxel editor for mo
 
 *Early release, made for my own game's assets and shared as is.*
 
-- Draw as in MagicaVoxel: attach, paint, erase and pick, with voxel, face, box and stamp brushes, sculpting and mirroring, in a 3D view and in slices.
+- Draw as in MagicaVoxel: attach, paint, erase and pick, with voxel, face, box, line, fill and stamp brushes, sculpting (smooth, erode, grow, smear) and mirroring, in a 3D view and in slices you can zoom. Every key can be changed.
 - See the model in a GPU path tracer while you work, under adjustable sun and sky.
 - Make materials of your own per model; they are saved inside the model file.
 - Place models together as linked instances in scenes; multi-model MagicaVoxel files open as projects.

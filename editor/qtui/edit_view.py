@@ -36,14 +36,16 @@ from vtkmodules.vtkRenderingCore import vtkActor, vtkCellPicker, vtkPolyDataMapp
 
 from core.brushes import mirror_sum
 from core.scene import IDENTITY
-from qtui.brush import DRAGGED, SCULPT, SWAPPED_SCULPT, Brush, brush_edit, held_mode, mode_for, size_step
+from qtui import keymap
+from qtui.brush import DRAGGED, SCULPT, SWAPPED_SCULPT, Brush, Stroke, brush_edit, held_mode, mode_for, size_step
 from qtui.document import PROTECT_MODES
 from qtui.view_cut import CutPanel, kept
 
 HOVER_COLOUR = {"attach": (0.3, 1.0, 0.4), "paint": (1.0, 0.85, 0.1), "erase": (1.0, 0.3, 0.3),
                 "pick": (0.4, 0.8, 1.0), "protect": (0.75, 0.45, 1.0), "unprotect": (0.6, 0.6, 0.65),
                 # the sculpting brushes, which ignore the mode: grow adds as attach, erode takes off as erase
-                "grow": (0.3, 1.0, 0.4), "erode": (1.0, 0.3, 0.3), "smooth": (0.92, 0.92, 1.0)}
+                "grow": (0.3, 1.0, 0.4), "erode": (1.0, 0.3, 0.3), "smooth": (0.92, 0.92, 1.0),
+                "smear": (1.0, 0.6, 0.2)}
 PROTECTED_RGB = np.array([150, 80, 255], dtype=np.float32)  # protected voxels lean towards this
 PROTECTED_TINT = 0.45
 CLICK_SLOP = 4  # pixels a press may move and still count as a click
@@ -67,8 +69,9 @@ VIEWS = {"front": ((0, -1, 0), (0, 0, 1)), "back": ((0, 1, 0), (0, 0, 1)),
          "right": ((1, 0, 0), (0, 0, 1)), "left": ((-1, 0, 0), (0, 0, 1)),
          "top": ((0, 0, 1), (0, 1, 0)), "bottom": ((0, 0, -1), (0, -1, 0)),
          "iso 2:1": (_ISO(30), (0, 0, 1)), "iso": (_ISO(np.degrees(np.arctan(1 / np.sqrt(2)))), (0, 0, 1))}
-VIEW_KEYS = {Key.Key_1: ("front", "back"), Key.Key_3: ("right", "left"), Key.Key_7: ("top", "bottom"),
-             Key.Key_0: ("iso 2:1", "iso")}  # with the view focused; Ctrl: the second
+VIEW_ACTIONS = {"view_front": "front", "view_back": "back", "view_right": "right", "view_left": "left",
+                "view_top": "top", "view_bottom": "bottom", "view_iso_pixel": "iso 2:1", "view_iso": "iso"}  # keymap
+STROKE_STEP = 3  # pixels between the picks filling in a fast 3D stroke's gaps
 
 
 def view_axes(camera):
@@ -275,17 +278,16 @@ class EditView(QtWidgets.QWidget):
         frame_button.clicked.connect(self.frame)
         self.ortho_box = QtWidgets.QCheckBox("Ortho")
         self.ortho_box.setToolTip("Orthographic: no perspective, so parallel edges stay parallel and voxels the "
-                                  "same size at any depth (5 with the view focused)")
+                                  f"same size at any depth ({keymap.text('ortho')} with the view focused)")
         self.ortho_box.toggled.connect(self.set_ortho)
         views_button = QtWidgets.QToolButton(text="View")
-        views_button.setToolTip("Look along an axis, or isometric (keys with the view focused: 1 front, 3 right, "
-                                "7 top, Ctrl for the opposite side; 0 isometric 2:1, Ctrl+0 true isometric)")
+        views_button.setToolTip("Look along an axis, or isometric (the keys in the menu work with the view "
+                                "focused)")
         views_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         views_menu = QtWidgets.QMenu(views_button)
-        for name, key in (("front", "1"), ("back", "Ctrl+1"), ("right", "3"), ("left", "Ctrl+3"), ("top", "7"),
-                          ("bottom", "Ctrl+7"), ("iso 2:1", "0"), ("iso", "Ctrl+0")):
+        for action, name in VIEW_ACTIONS.items():
             text = {"iso 2:1": "Isometric 2:1 (pixel art)", "iso": "True isometric"}.get(name, name.capitalize())
-            views_menu.addAction(f"{text}\t{key}", lambda n=name: self.snap_view(n))
+            views_menu.addAction(f"{text}\t{keymap.text(action)}", lambda n=name: self.snap_view(n))
         views_button.setMenu(views_menu)
         background_button = QtWidgets.QToolButton(text="Background")
         background_button.setToolTip("The view's background: dark, light (for screenshots and prints) or white")
@@ -342,6 +344,8 @@ class EditView(QtWidgets.QWidget):
         self.last_stroke = None
         self.box_start = None  # (start voxel, normal) while a box is dragged
         self.stroke_mode = None  # the mode of the drag in progress
+        self.stroke = None  # its brush.Stroke (what a smear carries)
+        self.last_pos = None  # where its last mouse event was, to fill in the gaps of a fast drag
         self.hover_pos = None
         self._rebuild_timer = QtCore.QTimer(self, singleShot=True, interval=30, timeout=self.refresh)
         doc.changed.connect(self._rebuild_timer.start)
@@ -658,23 +662,31 @@ class EditView(QtWidgets.QWidget):
         self.end_stroke()
 
     # --- the brush --------------------------------------------------------------------------
-    def brush_voxels(self, hit, attach, box_end=None):
+    def brush_voxels(self, hit, attach, box_end=None, stroke=None):
         """What the brush would write for this pick in the current mode: (points, colours, materials), only
         voxels it changes, mirrored; None if nothing (qtui.brush.brush_edit, shared with the slices)."""
         tool = self.mode()
         target = attach if tool == "attach" else hit
         shift = bool(QtWidgets.QApplication.queryKeyboardModifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
         return brush_edit(self.doc, self.brush, tool, target, self._normal(hit, attach), hit=hit,
-                          box_start=self.box_start, box_end=box_end, shift=shift)
+                          box_start=self.box_start, box_end=box_end, shift=shift, stroke=stroke)
 
     def apply(self, hit, attach, box_end=None) -> int:
-        voxels = self.brush_voxels(hit, attach, box_end)
+        """Write the brush here: how many voxels changed."""
+        return self._write(hit, attach, box_end)[1]
+
+    def _write(self, hit, attach, box_end=None, refresh: bool = True):
+        """Write the brush here: (the points it wrote or None, how many changed). refresh: remesh them at once
+        (so the next pick sees them), else the caller does."""
+        voxels = self.brush_voxels(hit, attach, box_end, self.stroke)
         if voxels is None:
-            return 0
+            return None, 0
         changed = self.doc.apply_brush(voxels, self.mode())
-        if changed:  # at once, so the next pick sees the new voxels; only the chunks the brush touched
+        if not changed:
+            return None, 0
+        if refresh:  # only the chunks the brush touched
             self.refresh(voxels[0])
-        return changed
+        return voxels[0], changed
 
     def set_stamp(self, name, model, orient=IDENTITY):
         self.brush.set_stamp(name, model, orient)
@@ -689,8 +701,10 @@ class EditView(QtWidgets.QWidget):
                 self.doc.pick(*hit)
             return
         self.doc.begin_stroke()
+        self.stroke = Stroke()
         self.stroke_layer = None
         self.last_stroke = None
+        self.last_pos = None
         if self.brush.kind in DRAGGED:
             hit, attach = self._pick(pos)
             target = attach if self.stroke_mode == "attach" else hit
@@ -701,17 +715,33 @@ class EditView(QtWidgets.QWidget):
         self.continue_stroke(pos)
 
     def continue_stroke(self, pos):
+        """The mouse moved while drawing: the brush at every voxel it passed over, not only where the mouse
+        events came (a fast drag would leave gaps): picks every STROKE_STEP pixels between them."""
         if self.stroke_mode in (None, "pick"):
             return
+        last, self.last_pos = self.last_pos, tuple(pos)
+        if self.brush.kind in DRAGGED or last is None:
+            self._stroke_at(pos)
+            return
+        steps = max(1, int(np.hypot(pos[0] - last[0], pos[1] - last[1]) // STROKE_STEP))
+        touched = []
+        for t in range(1, steps + 1):
+            at = (round(last[0] + (pos[0] - last[0]) * t / steps), round(last[1] + (pos[1] - last[1]) * t / steps))
+            touched += self._stroke_at(at, refresh=False)
+        if touched:  # once for the whole run: only the chunks it touched
+            self.refresh(np.concatenate(touched))
+
+    def _stroke_at(self, pos, refresh: bool = True) -> list:
+        """The brush where the stroke is now; the voxels written, as a list of point arrays."""
         hit, attach = self._pick(pos)
         target = attach if self.stroke_mode == "attach" else hit
         if self.brush.kind in DRAGGED:
             if self.box_start is not None and target is not None:
                 self.last_stroke = target
                 self._show_preview(hit, attach, target)
-            return
+            return []
         if target is None or target == self.last_stroke:
-            return
+            return []
         if self.stroke_mode == "attach":
             # stay in the first target's layer along its face normal, or attach climbs towards the camera
             if self.stroke_layer is None:
@@ -719,11 +749,13 @@ class EditView(QtWidgets.QWidget):
                 self.stroke_layer = (axis, target[axis])
             axis, value = self.stroke_layer
             if target[axis] != value:
-                return
+                return []
         first = self.last_stroke is None
         self.last_stroke = target
-        if self.apply(hit, attach) and first:
+        written, _ = self._write(hit, attach, refresh=refresh)
+        if written is not None and first:
             self.doc.focus_changed.emit(*target)  # the slices follow the voxel first drawn
+        return [] if written is None else [written]
 
     def end_stroke(self):
         if self.stroke_mode in (None, "pick"):
@@ -734,6 +766,7 @@ class EditView(QtWidgets.QWidget):
             self.apply(start, start, box_end=self.last_stroke)  # the box brush reads its start and normal
             self.box_start = None
         self.doc.end_stroke()
+        self.stroke = None
         self.stroke_layer = None
         self.stroke_mode = None
         self._clear_hover()
@@ -835,26 +868,23 @@ class EditView(QtWidgets.QWidget):
             if self.hover_pos is not None and self.stroke_mode is None:
                 QtCore.QTimer.singleShot(0, lambda: self.update_hover(self.hover_pos))  # the preview follows the keys
             return False
+        if event.type() == QtCore.QEvent.Type.Enter:
+            keymap.take_focus(self.plotter.interactor)  # its keys work without a click first
+            return False
         if event.type() == QtCore.QEvent.Type.KeyPress:
             key, shift = event.key(), bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
-            if key == QtCore.Qt.Key.Key_BracketLeft:
-                self.brush.set(size=self.brush.size - 1)
+            action = keymap.action_for(event, keymap.EDIT_3D)
+            if self.brush.kind == "stamp" and action in ("stamp_turn", "stamp_turn_back"):
+                self.brush.turn_stamp(-1 if action == "stamp_turn_back" else 1)
                 return True
-            if key == QtCore.Qt.Key.Key_BracketRight:
-                self.brush.set(size=self.brush.size + 1)
-                return True
-            if self.brush.kind == "stamp" and key == QtCore.Qt.Key.Key_R:
-                self.brush.turn_stamp(-1 if shift else 1)
-                return True
-            if self.brush.kind == "stamp" and key == QtCore.Qt.Key.Key_Escape:
+            if self.brush.kind == "stamp" and action == "stamp_stop":
                 self.brush.set(kind="voxel")
                 return True
-            if key == Key.Key_5:
+            if action == "ortho":
                 self.ortho_box.toggle()
                 return True
-            if key in VIEW_KEYS:
-                ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
-                self.snap_view(VIEW_KEYS[key][ctrl])
+            if action in VIEW_ACTIONS:
+                self.snap_view(VIEW_ACTIONS[action])
                 return True
             delta = view_delta(self.plotter.camera, key, BIG_STEP if shift else 1)
             if delta is not None and self.stroke_mode is None:

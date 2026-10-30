@@ -21,6 +21,7 @@ from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from core.scene import place_plane
+from qtui import keymap
 from qtui.edit_view import BIG_STEP, CLICK_SLOP, view_axes, view_delta, voxel_faces
 
 SELECTED_COLOUR = (1.0, 0.85, 0.1)
@@ -302,6 +303,8 @@ class SceneView(QtWidgets.QWidget):
         return self._view_axes()[0][0]
 
     def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.Enter:
+            keymap.take_focus(self.plotter.interactor)  # its keys work without a click first
         if event.type() == QtCore.QEvent.Type.KeyPress and self.key(event):
             return True
         return super().eventFilter(obj, event)
@@ -315,17 +318,18 @@ class SceneView(QtWidgets.QWidget):
         k, mods = event.key(), event.modifiers()
         shift = bool(mods & QtCore.Qt.KeyboardModifier.ShiftModifier)
         step = BIG_STEP if shift else 1
+        action = keymap.action_for(event, keymap.SCENE)
         if (delta := view_delta(self.plotter.camera, k, step)) is not None:
             self.pdoc.move(*delta)
-        elif k == Key.Key_R:
-            self.pdoc.rotate(2, -1 if shift else 1)
-        elif k == Key.Key_M:
+        elif action in ("instance_turn", "instance_turn_back"):
+            self.pdoc.rotate(2, -1 if action == "instance_turn_back" else 1)
+        elif action == "instance_mirror":
             self.pdoc.mirror(self.screen_axis())
-        elif k == Key.Key_D and mods & QtCore.Qt.KeyboardModifier.ControlModifier:
+        elif action == "instance_duplicate":
             self.pdoc.duplicate()
-        elif k in (Key.Key_Delete, Key.Key_Backspace):
+        elif action == "instance_delete":
             self.pdoc.delete()
-        elif k in (Key.Key_Return, Key.Key_Enter):
+        elif action == "instance_edit":
             self.pdoc.request_edit()
         else:
             return False

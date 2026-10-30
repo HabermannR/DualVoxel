@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -21,6 +20,10 @@ EDITOR = HERE.parent
 ROOT = EDITOR.parent
 FIGURES = HERE / "figures"
 sys.path.insert(0, str(EDITOR))
+sys.path.insert(0, str(EDITOR / "tests"))
+# as the tests: the window starts from fresh settings (not maximized, the default layout, the link off), and
+# the user's own editor and its live link are left alone
+import sandbox  # noqa: E402,F401
 
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -68,13 +71,39 @@ class Shooter:
     def __init__(self, window):
         self.window = window
 
+    def views(self) -> list[QtWidgets.QWidget]:
+        """The VTK views in sight: a grab taken before one has drawn shows it black."""
+        scenes = getattr(self.window, "scenes", None)
+        views = [self.window.edit_view] + ([scenes.scene_view] if scenes is not None else [])
+        return [v for v in views if v.isVisible()]
+
     def grab(self) -> tuple[QtGui.QImage, float]:
+        """The window as on screen, every VTK view drawn first; taken again (up to 5 times) while one of them
+        still comes out black (the README's scene picture once did)."""
         w = self.window
         w.raise_()
         w.activateWindow()
-        wait(120)
-        pixmap = w.screen().grabWindow(w.winId())
-        return pixmap.toImage(), pixmap.devicePixelRatio() or w.devicePixelRatioF()
+        for attempt in range(5):
+            for view in self.views():
+                view.plotter.render()
+                view.plotter.interactor.repaint()
+            wait(120 + 400 * attempt)
+            pixmap = w.screen().grabWindow(w.winId())
+            image, ratio = pixmap.toImage(), pixmap.devicePixelRatio() or w.devicePixelRatioF()
+            black = [v for v in self.views() if self.is_black(image, ratio, v)]
+            if not black:
+                return image, ratio
+            print(f"  {', '.join(type(v).__name__ for v in black)} not drawn yet: again")
+        raise RuntimeError("a 3D view stayed black")
+
+    def is_black(self, image: QtGui.QImage, ratio: float, view: QtWidgets.QWidget) -> bool:
+        import numpy as np
+        top_left = view.mapTo(self.window, QtCore.QPoint(0, 0))
+        rect = QtCore.QRect(round(top_left.x() * ratio), round(top_left.y() * ratio), round(view.width() * ratio),
+                            round(view.height() * ratio)).intersected(image.rect())
+        cut = image.copy(rect).convertToFormat(QtGui.QImage.Format.Format_RGB32)
+        pixels = np.frombuffer(cut.constBits(), np.uint8).reshape(cut.height(), cut.bytesPerLine())
+        return int(pixels[:, :cut.width() * 4].reshape(cut.height(), cut.width(), 4)[..., :3].max()) < 8
 
     def whole(self, name: str) -> None:
         image, ratio = self.grab()
@@ -109,10 +138,7 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
     from qtui.window import EditorWindow
-    QtCore.QSettings("VoxelPipeline", "QtEditor")  # the user's layout is left alone: a private one below
-    window = EditorWindow()
-    window.settings = QtCore.QSettings(str(Path(tempfile.mkdtemp()) / "layout.ini"),
-                                       QtCore.QSettings.Format.IniFormat)
+    window = EditorWindow()  # its settings are a fresh private file (sandbox)
     window.closeEvent = lambda event: event.accept()  # never ask to save
     window.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
     window.open_path(ROOT / "assets" / "alchemist.vx2")
@@ -255,9 +281,10 @@ def main() -> None:
     # a slice with the brush's footprint under the cursor
     top = window.slices["Top"]
     window.docks["Top"].setAsCurrentTab()
-    top.depth_box.setValue(10)
+    top.depth_box.setValue(6)  # through the boots, the staff beside them
     wait(150)
-    top.canvas.hover = (16, 14)
+    top.canvas.zoom_at(top.canvas._screen_rect(15, 17).center(), 3)  # zoomed in on them (Ctrl + wheel)
+    top.canvas.hover = (18, 17)
     top.canvas.update()
     wait(150)
     shoot.widget(top, "slice_top")

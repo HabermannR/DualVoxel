@@ -71,7 +71,13 @@ render dock.
   shows the current mapping, and the 3D preview follows the keys as you press
   them. Right drag orbits, middle drag pans (Shift + right drag too, for
   trackpads), the wheel zooms (the 3D view and the scene view; the slices'
-  wheel moves the layer).
+  wheel moves the layer, Ctrl + wheel zooms them).
+- **Keys:** one list (`qtui/keymap.py`); Edit > Keys… (Ctrl+K) changes any of
+  them, two per action, kept in `editor.local.json`, a key two actions would
+  share shown in red. The modes, brushes, brush size (`[` `]` or `-` `+`),
+  shape, mirrors and Behind work anywhere; a view's own keys work while it has
+  the focus, and a view takes the focus when the mouse comes over it. The
+  guide's table of keys is made from the list (`docs/keys_table.py`).
 - **Brush** (a dock at the top right, as MagicaVoxel's brush panel; it acts
   in the 3D view and the slices). **Mode:** Attach (A) adds voxels against the clicked face
   or the floor and only fills empty ones, Paint (B) gives voxels that are
@@ -79,7 +85,7 @@ render dock.
   material, Colour, Material, which also turns on the material view), Erase (E) removes them, Pick (P) takes colour and material,
   Protect (L) marks voxels an assistant may not change over the live link
   (tinted violet; Shift lifts it; Tools > Clear protection lifts all).
-  **Brush:** Voxel (a size, 1-32, `[` and `]` in the 3D view, Alt + Shift + wheel there and in the slices; square or
+  **Brush:** Voxel (a size, 1-32, `[` and `]` or `-` and `+`, Alt + Shift + wheel in the 3D view and the slices; square or
   circle; 2D, flat across the clicked face, or 3D, a cube or sphere, resting
   on the face when attaching), Face (the clicked face's whole connected flat
   area: attach builds a layer on it), Box (drag a rectangle in the clicked
@@ -88,7 +94,10 @@ render dock.
   tolerance, in 3D, in its layer or in the whole model; attach fills an
   enclosed hollow, never the space around the model), Stamp (a project's model, see Scenes). **Sculpt:** Smooth (rounds
   off what is in the brush: fills hollows, takes off bumps), Erode (takes the
-  outer skin off) and Grow (adds a skin, in the colours beside it), in the
+  outer skin off), Grow (adds a skin, in the colours beside it) and Smear
+  (picks up what is under the brush, solid and empty, and drags it along the
+  stroke, mixing colours in Lab to the nearest table colour; Strength: how far
+  it carries, 100 % drags the shape unchanged), in the
   Voxel brush's size and shape, whatever the mode; Shift swaps Erode and Grow.
   A drag sculpts again at every step, so going over a place digs or builds
   deeper. **Mirror** X / Y / Z
@@ -96,16 +105,19 @@ render dock.
   in half voxels (⌖: through the voxel last picked), shown in the 3D view and
   the slices. A see-through preview in the
   mode's colour shows exactly what a click would change. A drag applies the
-  brush along it (attach stays in one layer); each click or drag is one undo
-  step.
+  brush along it (attach stays in one layer), at every voxel it passed over
+  however fast the drag; each click or drag is one undo step.
 - **Slices:** the mouse rule above with the Brush dock's brush (attach fills
   empty cells, paint recolours, erase removes): its size and shape at every
   cell the mouse crosses (2D lies in the layer, 3D reaches the layers around
   it), Box a rectangle dragged in the layer (outlined while dragging), Face the
   connected area of the clicked cell's colour in the layer, the sculpting
   brushes and mirroring; Stamp is a 3D-view brush. The layer moves with the slider, the ▼/▲ buttons (held, they keep
-  stepping), the number box or the wheel; "Behind" shows the nearest voxels
-  behind it, dimmed.
+  stepping), the number box, the wheel or Page Up / Page Down (`.` `,`);
+  "Behind" shows the nearest voxels behind it, dimmed. A layer fits its slice
+  at any model size; Ctrl + wheel zooms round the cursor, middle drag or
+  Shift + right drag pans, Home or a middle double click fits again, and a
+  stroke held past the edge pans along. Each mouse move is one write.
 - **Noise** (a tab beside Brush): the API's noise tools on a box of the model,
   each run one undo step. **Speckle** recolours from weighted colours,
   scattered or in patches; **Terrain** fills ground up to a smooth noise height
@@ -259,7 +271,7 @@ render dock.
     about x, y or z (keeping the bottom where it was), mirror x, y or z, reset;
     **Array**: a grid of linked copies (counts along x, y, z and a gap) or a
     circle (count, radius, each copy turned to face out).
-  - Ctrl+Z / Ctrl+Y undo scene changes while the Project dock, the scene view or
+  - Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) undo scene changes while the Project dock, the scene view or
     the transform panel has focus, the model's edits elsewhere. Save project
     also saves edited models (into `..\assets`, as Ctrl+S does).
   - **Stamp brush:** "Use as brush" in the Project dock makes the selected model

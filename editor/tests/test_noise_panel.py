@@ -146,7 +146,7 @@ class NoisePanelTests(unittest.TestCase):
         from PySide6.QtTest import QTest
         canvas, left = view.canvas, QtCore.Qt.MouseButton.LeftButton
         modifiers = modifiers or QtCore.Qt.KeyboardModifier.NoModifier
-        at = [canvas._screen_rect(*cell).center() for cell in cells]
+        at = [canvas._screen_rect(*cell).center().toPoint() for cell in cells]
         QTest.mousePress(canvas, left, modifiers, at[0])
         for point in at[1:]:
             QTest.mouseMove(canvas, point)
@@ -186,7 +186,7 @@ class NoisePanelTests(unittest.TestCase):
         view = self._slice("Front")
         canvas = view.canvas
         self.panel.set_box((2, 0, 1), (9, 15, 5))
-        rect = canvas._screen_rect(2, 1).united(canvas._screen_rect(9, 5))
+        rect = canvas._screen_rect(2, 1).united(canvas._screen_rect(9, 5)).toRect()
         colour = QtGui.QColor(*self.panel.region.COLOUR)
 
         def left_edge():

@@ -762,7 +762,7 @@ class QtSceneTests(unittest.TestCase):
         canvas = window.slices["Top"].canvas
         window.slices["Top"].depth_box.setValue(0)
         QTest.qWait(50)
-        cell = canvas._screen_rect(1, 1).center()
+        cell = canvas._screen_rect(1, 1).center().toPoint()
         QTest.mouseClick(canvas, QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier, cell)
         self.assertEqual(doc.voxel(1, 1, 0), 7)
         doc.set_colour(9)

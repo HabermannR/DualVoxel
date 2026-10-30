@@ -1,5 +1,5 @@
 """The Brush dock: the mode (attach, paint, erase, pick), the brush (voxel, face, box, ellipsoid, line, fill, stamp, or a sculpting
-brush: smooth, erode, grow) with its options, and mirroring, for the 3D edit view and the slices;
+brush: smooth, erode, grow, smear) with its options, and mirroring, for the 3D edit view and the slices;
 MagicaVoxel's brush panel, plainer. The sculpting brushes reshape what is there in the size and shape set
 below, whatever the mode, so while one is chosen no mode shows as chosen; Shift swaps erode and grow.
 Choosing a mode (its button or its key) goes back from a sculpting brush to the brush used before it.
@@ -15,7 +15,7 @@ from core.brushes import MAX_SIZE
 from core.scene import placed_size
 from qtui.brush import MAX_TOLERANCE, SCULPT, mode_for
 from qtui.document import TOOLS
-from qtui.palette_panel import TOOL_KEYS
+from qtui import keymap
 
 SEGMENT_STYLE = """
 QToolButton { padding: 4px 10px; border: 1px solid #5a5a60; background: #3a3a40; color: #ddd; }
@@ -36,6 +36,7 @@ KIND_TIPS = {
     "smooth": "Rounds off what is in the brush: fills hollows, takes off bumps",
     "erode": "Takes the outer skin of voxels off what is in the brush (Shift: grow)",
     "grow": "Adds a skin of voxels to what is in the brush, in the colours beside it (Shift: erode)",
+    "smear": "Drags what is under the brush along the stroke, voxels and colours, mixing it with what is there",
 }
 PAGES = ("voxel", "face", "box", "ellipsoid", "stamp", "fill")  # the options shown for each brush kind
 SIZED = (*SCULPT, "line")  # kinds that take the voxel brush's size and shape (its page)
@@ -122,8 +123,7 @@ class BrushPanel(QtWidgets.QWidget):
             widget.setStyleSheet("color: #aaa")
             return widget
 
-        row, self.mode_buttons = segmented([(t, f"{t.capitalize()}") for t in TOOLS],
-                                           {t: f"{MODE_TIPS[t]} ({TOOL_KEYS[t]})" for t in TOOLS}, self._set_mode)
+        row, self.mode_buttons = segmented([(t, f"{t.capitalize()}") for t in TOOLS], {}, self.set_mode)
         self._tool = doc.tool
         self._last_brush = brush.kind if brush.kind not in SCULPT else "voxel"  # the brush a mode goes back to
         grid.addWidget(label("Mode"), 0, 0)
@@ -146,10 +146,10 @@ class BrushPanel(QtWidgets.QWidget):
         row, self.kind_buttons = segmented([("voxel", "Voxel"), ("face", "Face"), ("box", "Box"),
                                             ("ellipsoid", "Ellipsoid"), ("line", "Line"), ("fill", "Fill"),
                                             ("stamp", "Stamp")],
-                                           KIND_TIPS, self._set_kind)
+                                           {}, self.set_kind)
         grid.addWidget(label("Brush"), 3, 0)
         grid.addLayout(row, 3, 1)
-        sculpt_row, sculpt_buttons = segmented([(k, k.capitalize()) for k in SCULPT], KIND_TIPS, self._set_kind)
+        sculpt_row, sculpt_buttons = segmented([(k, k.capitalize()) for k in SCULPT], {}, self.set_kind)
         group = self.kind_buttons["voxel"].group()
         for button in sculpt_buttons.values():
             group.addButton(button)  # one choice across both rows
@@ -164,7 +164,6 @@ class BrushPanel(QtWidgets.QWidget):
         self.size_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal, minimum=1, maximum=MAX_SIZE)
         self.size_box = QtWidgets.QSpinBox(minimum=1, maximum=MAX_SIZE, suffix=" vx")
         for widget in (self.size_slider, self.size_box):
-            widget.setToolTip("Brush width in voxels ([ and ] in the 3D view)")
             widget.valueChanged.connect(lambda v: self.brush.set(size=v))
         options.addWidget(label("Size"), 0, 0)
         options.addWidget(self.size_slider, 0, 1)
@@ -182,6 +181,13 @@ class BrushPanel(QtWidgets.QWidget):
         shapes.addSpacing(8)
         shapes.addLayout(dims_row, 1)
         options.addLayout(shapes, 1, 1, 1, 2)
+        self.strength_label = label("Strength")
+        self.strength_box = QtWidgets.QSpinBox(minimum=5, maximum=100, suffix=" %")
+        self.strength_box.setToolTip("How much of what the smear carries it lays down each step: more carries "
+                                     "it further; 100 % drags the shape along unchanged")
+        self.strength_box.valueChanged.connect(lambda v: self.brush.set(smear_strength=v / 100))
+        options.addWidget(self.strength_label, 2, 0)
+        options.addWidget(self.strength_box, 2, 1)
 
         def note(text=""):
             widget = QtWidgets.QLabel(text)
@@ -243,8 +249,6 @@ class BrushPanel(QtWidgets.QWidget):
         row.setSpacing(0)
         for axis in "XYZ":
             button = QtWidgets.QToolButton(text=axis, checkable=True)
-            button.setToolTip(f"Repeat every edit mirrored in {axis.lower()}, across the plane set below "
-                              "(the model's centre by default)")
             button.setStyleSheet(SEGMENT_STYLE)
             button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
             button.toggled.connect(self._set_mirror)
@@ -275,13 +279,35 @@ class BrushPanel(QtWidgets.QWidget):
         grid.setRowStretch(8, 1)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
 
+        self.refresh_tips()
         brush.changed.connect(self.refresh)
         doc.current_changed.connect(self.refresh)
         doc.resized.connect(self.refresh)
         doc.reset.connect(self.refresh)
         self.refresh()
 
-    def _set_kind(self, kind):
+    def refresh_tips(self):
+        """The tooltips, with the keys keymap has now."""
+        def tip(text, key):
+            keys = keymap.text(key)
+            return f"{text} ({keys})" if keys else text
+        for t, button in self.mode_buttons.items():
+            button.setToolTip(tip(MODE_TIPS[t], f"tool_{t}"))
+        for k, button in self.kind_buttons.items():
+            button.setToolTip(tip(KIND_TIPS[k], f"brush_{k}"))
+        for widget in (self.size_slider, self.size_box):
+            widget.setToolTip(f"Brush width in voxels ({keymap.text('size_down')}: smaller, "
+                              f"{keymap.text('size_up')}: larger)")
+        for button, axis in zip(self.mirror_buttons, "xyz"):
+            button.setToolTip(tip(f"Repeat every edit mirrored in {axis}, across the plane set below "
+                                  "(the model's centre by default)", f"mirror_{axis}"))
+        for value, button in self.shape_buttons.items():
+            button.setToolTip(tip("Circle / sphere" if value else "Square / cube", "round"))
+        for value, button in self.dims_buttons.items():
+            button.setToolTip(tip("A volume: cube or sphere" if value else "Flat, across the clicked face", "volume"))
+
+    def set_kind(self, kind):
+        """A brush chosen (its button or its key)."""
         if kind in SCULPT and self.doc.tool in ("pick", "protect"):  # where a sculpting brush would do nothing
             self.doc.set_tool("attach")
         if kind == "stamp" and self.brush.stamp is None:
@@ -290,7 +316,7 @@ class BrushPanel(QtWidgets.QWidget):
             return
         self.brush.set(kind=kind)
 
-    def _set_mode(self, tool):
+    def set_mode(self, tool):
         """A mode chosen: its strokes, so a sculpting brush gives way to the brush used before it."""
         self.doc.set_tool(tool)
         if self.brush.kind in SCULPT:
@@ -344,8 +370,11 @@ class BrushPanel(QtWidgets.QWidget):
         self.kind_buttons[b.kind].setChecked(True)
         page = "voxel" if b.kind in SIZED else b.kind  # sculpting and lines take the voxel brush's size and shape
         self.options.setCurrentIndex(PAGES.index(page))
+        self.strength_label.setVisible(b.kind == "smear")
+        self.strength_box.setVisible(b.kind == "smear")
         for widget, value in ((self.size_slider, b.size), (self.size_box, b.size), (self.height_box, b.height),
-                              (self.tolerance_box, b.fill_tolerance)):
+                              (self.tolerance_box, b.fill_tolerance),
+                              (self.strength_box, round(100 * b.smear_strength))):
             widget.blockSignals(True)
             widget.setValue(value)
             widget.blockSignals(False)

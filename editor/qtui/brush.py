@@ -9,7 +9,10 @@ shorter side), line (drag between two voxels: a line as thick as the voxel
 brush), fill (the connected area of the clicked voxel's colour, or an enclosed
 hollow; fill_region) and stamp (a project's model, from the outliner's "Use as brush"); and the sculpting ones,
 which reshape what is there within the voxel brush's size and shape: smooth,
-erode (peel the outer layer) and grow (add one; Shift swaps erode and grow).
+erode (peel the outer layer), grow (add one; Shift swaps erode and grow) and
+smear (drags the voxels under the brush along the stroke, solid and empty, their
+colours mixing with what is there; core.brushes.smear, its strength how far
+they carry; a Stroke keeps what it carries).
 Mirror x / y / z repeats every edit across the model's centre, or across a plane
 set per axis (mirror_plane). brush_edit()
 says what a click writes, for the 3D view and the slices alike.
@@ -27,10 +30,10 @@ import numpy as np
 from PySide6 import QtCore
 
 from core.brushes import (FILL_MATCHES, FILL_SCOPES, MAX_SIZE, SCULPT_OPS, box, ellipsoid, face_region, flood,
-                          layer_region, mirrored, placed, sculpt, thick_line)
+                          layer_region, mirror_images, mirrored, offsets, placed, sculpt, smear, thick_line)
 from core.scene import place_plane, rotated
 
-SCULPT = SCULPT_OPS  # smooth, erode, grow
+SCULPT = (*SCULPT_OPS, "smear")  # the brushes that reshape what is there, whatever the mode
 KINDS = ("voxel", "face", "box", "ellipsoid", "line", "fill", "stamp", *SCULPT)
 DRAGGED = ("box", "ellipsoid", "line")  # kinds drawn by dragging (a rectangle, a line), written on release
 MAX_TOLERANCE = 50  # the fill's colour tolerance, ΔE (CIEDE2000)
@@ -87,6 +90,7 @@ class Brush(QtCore.QObject):
         self.fill_match = "colour"     # FILL_MATCHES
         self.fill_diagonal = False     # cells touching at edges and corners count as connected too
         self.fill_tolerance = 0.0      # colours this close (ΔE) to the clicked one fill with it
+        self.smear_strength = 0.85     # how much of what the smear carries each step lays down (1: all of it)
 
     @property
     def shape(self) -> str:
@@ -115,6 +119,8 @@ class Brush(QtCore.QObject):
                 value = max(0.0, min(float(MAX_TOLERANCE), float(value)))
             if name == "fill_diagonal":
                 value = bool(value)
+            if name == "smear_strength":
+                value = max(0.05, min(1.0, float(value)))
             if getattr(self, name) != value:
                 setattr(self, name, value)
                 changed = True
@@ -132,6 +138,13 @@ class Brush(QtCore.QObject):
             name, model, orient = self.stamp
             self.stamp = (name, model, rotated(orient, 2, quarter_turns))
             self.changed.emit()
+
+
+class Stroke:
+    """One stroke's memory: what the smear brush carries, per mirror image (core.brushes.smear)."""
+
+    def __init__(self):
+        self.carried = {}
 
 
 def _as_voxel(brush: Brush):
@@ -161,8 +174,35 @@ def stamp_low(target, normal, size):
     return low
 
 
+def _smear(doc, brush, anchor, normal, stroke):
+    """The smear at an anchor and its mirror images, each carrying its own load through the stroke. Without
+    a stroke (the preview): the solid voxels it covers, as they are."""
+    model = doc.model
+    shape_offsets = offsets(brush.shape, brush.size, int(np.argmax(np.abs(normal))))
+    if stroke is None:
+        region, _ = mirrored(shape_offsets + np.asarray(anchor), doc.size, brush.mirror, brush.mirror_plane)
+        sx, sy, sz = doc.size
+        region = region[(region >= 0).all(axis=1) & (region[:, 0] < sx) & (region[:, 1] < sy) & (region[:, 2] < sz)]
+        x, y, z = region.T
+        solid = model.colour[z, y, x] > 0
+        return (region[solid], model.colour[z, y, x][solid], model.material[z, y, x][solid]) if solid.any() else None
+    written = []
+    for i, (at, flip) in enumerate(mirror_images(anchor, doc.size, brush.mirror, brush.mirror_plane)):
+        key = (i, brush.shape, brush.size, int(np.argmax(np.abs(normal))))
+        out, stroke.carried[key] = smear(model.colour, model.material, model.table.labs, shape_offsets * flip + at,
+                                         stroke.carried.get(key), brush.smear_strength)
+        if out is not None:
+            written.append(out)
+    if not written:
+        return None
+    points = np.concatenate([w[0] for w in written])
+    _, last = np.unique(points[::-1], axis=0, return_index=True)  # where images overlap, the last one wins
+    pick = len(points) - 1 - last
+    return points[pick], np.concatenate([w[1] for w in written])[pick], np.concatenate([w[2] for w in written])[pick]
+
+
 def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start=None, box_end=None,
-               in_slice: bool = False, shift: bool = False):
+               in_slice: bool = False, shift: bool = False, stroke: Stroke | None = None):
     """What the brush writes for a click: (points, colours, materials) of the voxels it changes (colour 0:
     removed), mirrored, or None. tool: attach, paint or erase (Document.tool with the keys held); target: the
     voxel the mode acts on (attach: the empty one before the face, else the solid one); normal: the clicked
@@ -170,6 +210,7 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
     empty cell); box_start: (voxel, normal) where a box drag began; in_slice: a slice, where the face brush
     fills the connected area of the clicked cell's colour in its layer and a stamp is a 3D-view brush.
     protect / unprotect: the solid voxels the brush covers, as paint would (the colours are not used).
+    stroke: the Stroke this click belongs to, for the smear (None: a preview, nothing carried).
     Painting writes what doc.paints says: the colour and the material, or one of them, the other staying
     as each voxel has it."""
     if tool == "pick" or target is None and hit is None:
@@ -180,6 +221,8 @@ def brush_edit(doc, brush: Brush, tool: str, target, normal, hit=None, box_start
             brush = _as_voxel(brush)
         tool = "paint"
     normal = np.asarray(normal)
+    if brush.kind == "smear":
+        return _smear(doc, brush, hit if hit is not None else target, normal, stroke)
     if brush.kind in SCULPT:
         op = SWAPPED_SCULPT.get(brush.kind, brush.kind) if shift else brush.kind
         anchor = hit if hit is not None else target
