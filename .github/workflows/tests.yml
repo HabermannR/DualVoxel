@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04]
+        os: [macos-15, ubuntu-24.04]  # macOS 14's runner image retires on 2 November 2026
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40  # the tests take about 15 minutes on macOS; a hang once ran into GitHub's six hours
     defaults:
