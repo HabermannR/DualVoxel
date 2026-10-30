@@ -38,11 +38,12 @@ jobs:
       - name: Tests (Linux)
         if: runner.os == 'Linux'
         # a window manager makes the editor's window the active one, so focus (and undo by focus) works.
-        # Since 0.5.0 Python here finished the tests in a minute and then never exited: past 20 minutes
-        # it is stopped with SIGABRT, and faulthandler prints where each thread was.
+        # Python here sometimes hung in native code at shutdown after every test had passed (tests/ci_run.py
+        # leaves without it); should anything still hang, it is stopped after 20 minutes with SIGABRT, and
+        # faulthandler prints where each thread was.
         run: >-
           xvfb-run -a -s "-screen 0 1920x1080x24" sh -c
-          'openbox & sleep 2; timeout -s ABRT 20m .venv/bin/python -X faulthandler -m unittest discover -s tests'
+          'openbox & sleep 2; timeout -s ABRT 20m .venv/bin/python -X faulthandler tests/ci_run.py'
 
   render:
     runs-on: ubuntu-24.04
