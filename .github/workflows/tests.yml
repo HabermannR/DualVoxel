@@ -16,6 +16,7 @@ jobs:
       matrix:
         os: [macos-14, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40  # the tests take about 15 minutes on macOS; a hang once ran into GitHub's six hours
     defaults:
       run:
         working-directory: editor
@@ -36,8 +37,12 @@ jobs:
         run: .venv/bin/python -m unittest discover -s tests
       - name: Tests (Linux)
         if: runner.os == 'Linux'
-        # a window manager makes the editor's window the active one, so focus (and undo by focus) works
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" sh -c 'openbox & sleep 2; .venv/bin/python -m unittest discover -s tests'
+        # a window manager makes the editor's window the active one, so focus (and undo by focus) works.
+        # Since 0.5.0 Python here finished the tests in a minute and then never exited: past 20 minutes
+        # it is stopped with SIGABRT, and faulthandler prints where each thread was.
+        run: >-
+          xvfb-run -a -s "-screen 0 1920x1080x24" sh -c
+          'openbox & sleep 2; timeout -s ABRT 20m .venv/bin/python -X faulthandler -m unittest discover -s tests'
 
   render:
     runs-on: ubuntu-24.04

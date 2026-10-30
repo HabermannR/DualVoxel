@@ -627,4 +627,8 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.render_view.close_engine()
         self.edit_view.close()
         self.dock_manager.deleteLater()
+        # its keys are the application's (_action): a closed window that lives on (macOS's menu bar keeps its
+        # actions) would make every key it shares with a newer window ambiguous, and Qt then runs neither
+        for action in self.key_actions.values():
+            action.setShortcuts([])
         super().closeEvent(event)

@@ -179,16 +179,20 @@ class SliceZoomTests(unittest.TestCase):
         from PySide6.QtTest import QTest
         self.doc.set_tool("attach")
         self.view.depth_box.setValue(10)
-        self.canvas.zoom_at(QtCore.QPointF(10, 150), 10)
-        start = QtCore.QPoint(20, 150)
+        # the fitted layer is a thin band across the canvas's middle: a fixed row (150) lay just below it where
+        # the canvas came out a little lower (250 pixels on Linux and macOS), so no stroke began
+        y = self.canvas.height() // 2
+        self.canvas.zoom_at(QtCore.QPointF(10, y), 10)
+        start = QtCore.QPoint(20, y)
         QTest.mousePress(self.canvas, QtCore.Qt.MouseButton.LeftButton, pos=start)
+        self.assertIsNotNone(self.canvas.stroke_button)
         before = QtCore.QPointF(self.canvas.pan)
-        QTest.mouseMove(self.canvas, QtCore.QPoint(self.canvas.width() + 80, 150))
+        QTest.mouseMove(self.canvas, QtCore.QPoint(self.canvas.width() + 80, y))
         QTest.qWait(200)
         self.assertLess(self.canvas.pan.x(), before.x())  # panned towards the cursor
         QTest.mouseRelease(self.canvas, QtCore.Qt.MouseButton.LeftButton,
-                           pos=QtCore.QPoint(self.canvas.width() + 80, 150))
-        u, v = self.canvas.cell_at(QtCore.QPointF(self.canvas.width() - 1, 150))
+                           pos=QtCore.QPoint(self.canvas.width() + 80, y))
+        u, v = self.canvas.cell_at(QtCore.QPointF(self.canvas.width() - 1, y))
         self.assertTrue(self.doc.model.colour[v, 10, :u + 1].all() or self.doc.model.colour[:, 10, u].any())
 
     def test_leaving_clears_the_status_bar(self):

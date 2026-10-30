@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 EDITOR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EDITOR))
 import sandbox  # noqa: E402,F401  the user's own editor and settings are left alone
@@ -58,6 +60,30 @@ class FuzzRenderTests(unittest.TestCase):
         self.assertGreater(r, 1.6 * b, (r, g, b))
         redness = lambda x: (lambda p: p[0] - p[2])(patch(e, rgb, 0, 35, (x, 8, 2)))
         self.assertLess(redness(19), 0.8 * redness(7), "a fur tuft should be softer, its edge thinner, than matte")
+
+    def test_a_ledge_seen_edge_on_shows_no_slit(self):
+        """A step of plush seen level with its ledge: a ray skimming the ledge meets the pile under the next step
+        up (the fuzz field), not the sky behind the block, which once showed as a white slit along the ledge."""
+        e = VoxelEditor()
+        self.addCleanup(e.close)
+        e.new_model(40, 24, 16)
+        red, plush = e.model.nearest_slot((200, 40, 40)), BY_NAME["plush"]["id"]
+        e.paint_box([6, 4, 0], [33, 19, 5], red, plush)  # the lower step
+        e.paint_box([6, 11, 6], [33, 19, 11], red, plush)  # the upper step, set back
+        # the eye half a voxel above the ledge (the orbit's centre is 8 voxels up, the camera 1.45 x 40 voxels
+        # off), so rays come in through the ledge's top at a glance
+        pitch = -np.degrees(np.arcsin(1.5 / (1.45 * 40)))
+        rgb = picture(e, 0, pitch, "Day", samples=256)
+        engine = e._engine
+        eye, forward, right, up = engine.orbit_camera(0, pitch)
+        point = np.asarray(engine.origin[:3]) + np.asarray((20, 11, 6)) / 32 - eye  # the ledge's back edge
+        height, width = rgb.shape[:2]
+        fov = np.tan(np.radians(22.5))
+        x = int(((point @ right) / ((point @ forward) * fov * width / height) + 1) / 2 * width)
+        y = int((1 - (point @ up) / ((point @ forward) * fov)) / 2 * height)
+        band = rgb[y - 6:y + 7, x - 40:x + 41]  # rows across the ledge line, over the middle of the block
+        rows = band[..., 0].mean(axis=1) - band[..., 2].mean(axis=1)
+        self.assertGreater(rows.min(), 0.15, f"a row along the ledge is not red but sky: {rows.round(2)}")
 
 
 if __name__ == "__main__":

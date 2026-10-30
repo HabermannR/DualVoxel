@@ -40,11 +40,12 @@ look (a ray passes from the one into the other). The fog comes in six levels,
 faint haze (64) through thick fog (4).
 Fuzz (moss, felt, fur, wool, dust: group `fuzz`, the renderer's kind 9) is a
 soft pile of fibres: a ray that enters meets a fibre after a free flight, the
-fibres thin near the face and reach full **density** sss voxels below it (the
-reach, at most about a voxel, so the pile thins alike below a face and beside one), standing out in tufts that lean their own ways, broken as far as
-**roughness** says (the clump), shining by **sheen**. Fuzz faces carry which
-edges are open to air, so the pile thins there too: a block is one soft cube, a
-ball's steps soften. Paint it over a hard core; the core shows where it is thin.
+fibres thin towards the nearest air and reach full **density** sss voxels in (the
+reach, at most about a voxel), standing out in tufts that lean their own ways, broken as far as
+**roughness** says (the clump), shining by **sheen**. The renderer gets each fuzz
+voxel's distance to the air with the model, so a block is one soft lump, a ball's
+steps round off, and a ledge seen edge-on stays solid. Paint it over a hard core;
+the core shows where it is thin.
 `..\palette\build_fuzz_sweep.py` renders the fuzz fields.
 `..\palette\build_material_test.py` builds `assets\material_test.vx2` (one
 sphere per material) and renders it to `outputs\material_test.png`;
