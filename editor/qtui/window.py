@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import weakref
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +47,11 @@ def dropped_files(mime: QtCore.QMimeData) -> list[str]:
 
 
 class EditorWindow(QtWidgets.QMainWindow):
+    # The windows alive. Their keys are the application's (_action), so only the newest has them: with two,
+    # every key they share would be ambiguous and Qt would run neither (an older window may live on, closed
+    # or not: macOS's menu bar keeps its actions, and the tests make many windows).
+    alive = weakref.WeakSet()
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DualVoxel")
@@ -101,6 +107,9 @@ class EditorWindow(QtWidgets.QMainWindow):
         self._mark_saved()
 
         self._menus()
+        for older in list(EditorWindow.alive):
+            older.release_keys()
+        EditorWindow.alive.add(self)
         self.brush_panel = install_brush_panel(self)  # the 3D edit view's brushes
         self.light_panel = install_light_panel(self)  # the render's sun and sky
         self.setup_panel = install_render_setup_panel(self)  # surroundings, floor, tilt blur, pause
@@ -192,6 +201,11 @@ class EditorWindow(QtWidgets.QMainWindow):
         action.triggered.connect(slot)
         menu.addAction(action)
         return action
+
+    def release_keys(self):
+        """Give up the keys (alive): a closed window, or one a newer window has taken them from."""
+        for action in self.key_actions.values():
+            action.setShortcuts([])
 
     def apply_keys(self):
         """The keys as keymap has them now (after Edit > Keys…), on every menu entry."""
@@ -627,8 +641,5 @@ class EditorWindow(QtWidgets.QMainWindow):
         self.render_view.close_engine()
         self.edit_view.close()
         self.dock_manager.deleteLater()
-        # its keys are the application's (_action): a closed window that lives on (macOS's menu bar keeps its
-        # actions) would make every key it shares with a newer window ambiguous, and Qt then runs neither
-        for action in self.key_actions.values():
-            action.setShortcuts([])
+        self.release_keys()
         super().closeEvent(event)
