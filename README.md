@@ -1,6 +1,6 @@
 # DualVoxel
 
-Two bytes per voxel: a colour and a material. DualVoxel is a voxel editor for models and dioramas, with a live path-traced preview. Every voxel stores a **colour** from a shared table of 255 colours and a **material** that says how its surface takes the light (matte, glossy, metal, glass, subsurface, glowing). The materials blend like Blender's Principled BSDF.
+Two bytes per voxel: a colour and a material. DualVoxel is a voxel editor for models and dioramas, with a live path-traced preview. Every voxel stores a **colour** from a shared table of 255 colours and a **material** that says how it takes the light: 106 of them, from matte, cloth, metal, glass and skin to glowing, fog, smoke and soft piles of fibres such as moss, fur and wool. The materials blend like Blender's Principled BSDF.
 
 ![The alchemist, path-traced at golden hour](editor/docs/figures/current_cover.png)
 
@@ -17,6 +17,10 @@ Two bytes per voxel: a colour and a material. DualVoxel is a voxel editor for mo
 One colour, many materials: each row of spheres sweeps one field from low to high (front to back: metal, roughness, transmission, density, subsurface, sheen, ior).
 
 ![Spheres sweeping each material field](editor/docs/figures/render_field_sweep.png)
+
+Fuzz is a soft pile of fibres in the voxel colour: moss, felt, fur, wool, dust and more, each a coat over a darker core in the front row, then the pile's density, reach, clump and sheen from low to high:
+
+![Balls of fuzz sweeping its fields](editor/docs/figures/render_fuzz_sweep.png)
 
 The same model under the four light presets:
 

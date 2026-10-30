@@ -11,7 +11,8 @@ field: the fixed water, staff field and mirror; a full metal's ior; density
 without transmission; sss without subsurface. A plain matte material (rough,
 nothing else) is drawn by the fast matte path, the same picture. Gas (group
 "gas", kind 8) is a volume instead: it reads only density, anisotropy, emission
-and its light. Keep this in
+and its light. Fuzz (group "fuzz", kind 9) is a soft pile of fibres: density,
+sss (its reach), roughness (its clump) and sheen. Keep this in
 step with those functions; palette/build_field_sweep.py renders every field.
 """
 from __future__ import annotations
@@ -53,6 +54,14 @@ def reading(m: dict) -> tuple[str, dict[str, tuple[str, str]]]:
         if m.get("light"):
             fields["emission"] = (USED, f"the strength of the '{m['light']}' light's moving glow through the gas")
         return "gas (kind 8): " + ("glowing " if value(m, "emission") > 0 else "") + "scattering volume", fields
+    if m.get("group") == "fuzz":
+        fields = {f: (IGNORED, "fuzz is a pile of fibres, not a surface") for f in FIELDS}
+        fields["density"] = (USED, "how dense the pile is at full depth: the voxels a ray travels before it meets "
+                                   "a fibre (low: dense)")
+        fields["sss"] = (USED, "reach: how deep below the face the softness goes, in voxels")
+        fields["roughness"] = (USED, "clump: 0 an even pile (felt), 1 tufts with gaps between them (moss, fur)")
+        fields["sheen"] = (USED, "the fibres' soft shine where light grazes or comes from behind")
+        return "fuzz (kind 9): a soft pile of fibres", fields
     rough, metal, transmission = value(m, "roughness"), value(m, "metal"), value(m, "transmission")
     fields = {
         "roughness": (USED, f"the blur of every reflection; from {MATTE_LIMIT} up a non-metal no longer reflects"),

@@ -73,6 +73,21 @@ def _module_assign(tree: ast.Module, name: str) -> ast.Assign:
     raise ValueError(f"build_materials.py has no {name}")
 
 
+def lights_text(lights: dict) -> list[str]:
+    """LIGHTS as source lines, wrapped before MAX_LINE."""
+    items = [f"{k}: {json.dumps(v)}" for k, v in sorted(lights.items())]
+    lines, line = [], "LIGHTS = {"
+    for i, item in enumerate(items):
+        piece = item + ("}" if i == len(items) - 1 else ",")
+        if len(line) + 1 + len(piece) > MAX_LINE and not line.endswith("{"):
+            lines.append(line)
+            line = " " * len("LIGHTS = {") + piece
+        else:
+            line += ("" if line.endswith("{") else " ") + piece
+    lines.append(line if items else "LIGHTS = {}")
+    return lines
+
+
 def write_source(materials: list[dict], source: Path = HERE / "build_materials.py") -> dict:
     """Rewrite the rows of `materials` that differ from the source, append new ids, update LIGHTS.
     Returns {"changed": [ids], "added": [ids]}."""
@@ -106,8 +121,7 @@ def write_source(materials: list[dict], source: Path = HERE / "build_materials.p
         added = new_ids
     lights = {m["id"]: m["light"] for m in materials if m.get("light")}
     if lights != ast.literal_eval(lights_node.value):
-        edits.append((lights_node.lineno, lights_node.end_lineno,
-                      [f"LIGHTS = {{{', '.join(f'{k}: {json.dumps(v)}' for k, v in sorted(lights.items()))}}}"]))
+        edits.append((lights_node.lineno, lights_node.end_lineno, lights_text(lights)))
     for first, last, replacement in sorted(edits, key=lambda e: e[0], reverse=True):
         lines[first - 1:last] = replacement
     if edits:

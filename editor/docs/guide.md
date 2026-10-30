@@ -264,7 +264,23 @@ The **Materials** dock lists the materials by group: rough, glossy, metal, glowi
 
 > **Tip:** rust patches, scratches and worn edges are not textures. Paint them voxel by voxel with materials such as **rust**, **worn metal**, **scratched metal** and **worn leather**.
 
-**Gas** (smoke, steam, mist, glowing gas, flame) is a volume, not a surface: light passes into it and scatters inside, so mist glows where a lantern shines into it and smoke casts a soft shadow. The voxel colour is how a thick body of the gas looks: white steam stays white however deep it is, dark smoke stays dark. Where two different gases touch, each keeps its own look. **density** is how many voxels light travels on average before it scatters (low: thick smoke), **anisotropy** how much it scatters forward (mist and steam glow toward the sun), and **emission** makes it glow all through; the flame also flickers. Solids inside or under gas keep their faces.
+Most families come as a ladder, so a surface can be one step glossier or a glow one step brighter:
+
+| Family | From one end to the other |
+|---|---|
+| Surfaces | matte, cloth, velvet, eggshell, satin, silk, oiled wood, plastic, glossy, wet, ceramic, polished |
+| Metals | dull metal, worn, rough, scratched, brushed, polished, satin, mirror; metallic paint and pearl are part metal |
+| Glows | very faint glow, faint glow, dim glow, glow, bright glow, light, strong light, blinding light; embers, candle, fire glow and torch flicker, slow pulse, pulse and bright pulse breathe |
+| Glass | pale glass, glass, tinted glass, deep glass (by how fast they take their colour); crystal and diamond sparkle more; frosted, smoked and milky glass, murky water |
+| Under the surface | porcelain, leaf, marble, skin, flesh, wax, jade, gummy |
+| Fog | faintest haze, faint haze, thin haze, haze, light mist, mist, heavy mist, fog, thick fog, dense fog |
+| Smoke and cloud | thin smoke, smoke, thick smoke, dense smoke; light steam, steam, cloud; dust cloud |
+| Glowing gas | faint glowing gas, glowing gas, bright glowing gas, magic mist (with rising bands of light), flame |
+| Fuzz | velvet nap, thin dust, dust, short fur, carpet, felt, plush, moss, lichen, grass, fur, shaggy fur, wool, cotton, hay, fluff |
+
+**Gas** (smoke, steam, mist, glowing gas, flame) is a volume, not a surface: light passes into it and scatters inside, so mist glows where a lantern shines into it and smoke casts a soft shadow. The voxel colour is how a thick body of the gas looks: white steam stays white however deep it is, dark smoke stays dark. Where two different gases touch, each keeps its own look. **density** is how many voxels light travels on average before it scatters (low: thick smoke), **anisotropy** how much it scatters forward (mist and steam glow toward the sun), and **emission** makes it glow all through; the flame also flickers. Solids inside or under gas keep their faces. Besides mist there are four more levels of fog: **faint haze** and **haze** for depth over a whole diorama, **light mist**, **fog** and **thick fog**, which hides what is more than a dozen voxels in.
+
+**Fuzz** (moss, felt, fur, wool, dust) is a soft pile of fibres in the voxel colour. It is opaque in its body, but its edge is soft and broken, so a ball of it has a fuzzy outline and its corners round off. Paint a layer or two of it over a hard core: the core shows through where the pile is thin, so a dark core under fur gives it dark roots. Its edges and corners soften the same way as its faces, so a block of it reads as one soft cube and a small tuft on its own as a soft lump. The fibres stand out of the faces in tufts that lean their own ways, so fur seems to flow. Fuzz reads four fields: **density** is how dense the pile is (low: dense), **sss** is its reach (how deep below the face the softness goes, in voxels, at most about one), **roughness** is its clump (0 an even pile like felt, 1 tufts with gaps like moss and fur), and **sheen** is the fibres' shine where light grazes.
 
 <img src="figures/current_gas.png" width="480" alt="Mist, a fire with smoke and a glowing red haze at night">
 

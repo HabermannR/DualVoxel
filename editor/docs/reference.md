@@ -105,6 +105,12 @@ Three names are fixed effects that ignore their fields: `water`, `staff field` a
 
 *Front to back: density (white steam, 1 to 32 voxels: thick to nearly clear), anisotropy (steam, 0 to 0.9: more forward scattering, so dimmer seen with the sun behind you), colour (smoke, black to white: the colour is how a thick body looks), emission (green glowing gas, 0 to 4, lighting the floor), light (violet glowing gas with fire, pulse, flash, sickly, unnatural and arcane, at one moment).*
 
+`palette/build_fuzz_sweep.py` does the same with balls of fuzz (group `fuzz`), whose fields are **density** (how dense the pile is), **sss** (its reach), **roughness** (its clump) and **sheen**:
+
+![The fuzz sweep](figures/render_fuzz_sweep.png)
+
+*Front to back: the five fuzz materials (moss, felt, fur, wool and dust, each a coat over a core in a dark shade of its colour) and a ball of fur all through; density (tan fur, 0.25 to 2 voxels); reach (0.25 to 3 voxels; past about one the renderer caps it); clump (0 to 1: an even pile to tufts with gaps); sheen (deep red fur, 0 to 1).*
+
 ---
 
 ## Shared and own materials

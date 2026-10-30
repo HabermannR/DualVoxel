@@ -29,6 +29,8 @@ STYLE_BY_GROUP = {"subsurface": 5}
 LIGHT_STYLE = {"fire": 8, "pulse": 9, "flash": 10, "sickly": 11, "unnatural": 12, "arcane": 13}
 # Gas (group "gas"): style 14, or 15-20 with a magic light's pattern in its glow.
 GAS_STYLE = 14
+# Fuzz (group "fuzz"): style 21, a soft pile of fibres (moss, felt, fur, dust).
+FUZZ_STYLE = 21
 GEM_VOXELS = 128  # at most this many staff-field voxels get the staff's point light
 
 
@@ -36,6 +38,8 @@ def style_of(m: dict) -> int:
     """A material's renderer style; anything that scatters inside (sss > 0: skin, jade, ice) is subsurface."""
     if m.get("group") == "gas":
         return GAS_STYLE + (LIGHT_STYLE[m["light"]] - 7 if m.get("light") else 0)
+    if m.get("group") == "fuzz":
+        return FUZZ_STYLE
     if m.get("light"):
         return LIGHT_STYLE[m["light"]]
     if m["name"] in STYLE_BY_NAME:

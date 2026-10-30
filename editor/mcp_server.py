@@ -148,7 +148,8 @@ def list_materials() -> list[dict]:
 def add_material(base: int = 0, name: str = "", fields: dict | None = None) -> dict:
     """A material of the model's own (ids 128 up, saved in its .vx2): a copy of material `base` named
     `name`, with `fields` changed: roughness, metal, emission, ior, transmission, density, sss, subsurface,
-    sheen, anisotropy, group ("gas" makes a volume), light (fire, pulse, flash, sickly, unnatural, arcane or
+    sheen, anisotropy, group ("gas" makes a volume, "fuzz" a soft pile of fibres reading density, sss as its
+    reach, roughness as its clump and sheen), light (fire, pulse, flash, sickly, unnatural, arcane or
     "") and note. E.g. a beating red haze: base 37 (glowing gas), {"light": "pulse", "emission": 1.5}.
     Returns its id; paint with it like any material."""
     _own_only("adds materials (Materials dock: New material…)")

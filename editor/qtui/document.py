@@ -28,7 +28,7 @@ PAINTS = ("both", "colour", "material")
 # lighter for later materials in the group, so each material is told apart.
 GROUP_COLOUR = {"rough": (200, 192, 180), "glossy": (235, 235, 240), "metal": (120, 160, 220),
                 "emissive": (255, 210, 40), "transparent": (70, 215, 255), "subsurface": (255, 120, 160),
-                "special": (190, 80, 255), "gas": (120, 235, 160)}
+                "special": (190, 80, 255), "gas": (120, 235, 160), "fuzz": (200, 150, 90)}
 
 
 def material_colours(materials) -> np.ndarray:

@@ -114,8 +114,9 @@ class MaterialEditor(QtWidgets.QWidget):
         self.name_edit.editingFinished.connect(lambda: self._set_text("name", self.name_edit))
         self.group_box = QtWidgets.QComboBox()
         self.group_box.setEditable(True)
-        self.group_box.setToolTip("rough, glossy, metal, emissive, transparent, subsurface, gas, special or a new "
-                                  "group; subsurface draws as scattering even without sss, gas as a volume")
+        self.group_box.setToolTip("rough, glossy, metal, emissive, transparent, subsurface, gas, fuzz, special or "
+                                  "a new group; subsurface draws as scattering even without sss, gas as a volume, "
+                                  "fuzz as a soft pile of fibres")
         self.group_box.lineEdit().editingFinished.connect(
             lambda: self.set_field("group", self.group_box.currentText().strip() or self.material["group"]))
         self.group_box.activated.connect(lambda _i: self.set_field("group", self.group_box.currentText()))
